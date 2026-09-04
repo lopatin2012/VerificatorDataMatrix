@@ -9,7 +9,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw, ImageOps
 
-from verifier import analyze, is_good, problem_regions, score_of
+from verifier import (Result, analyze_all, is_good, plain_content,
+                      problem_regions, score_of)
 from version import VERSION
 
 SEV_COLORS = {
@@ -154,7 +155,7 @@ class VerifierApp:
 
         ttk.Button(toolbar, text="Открыть файл...", style="Accent.TButton",
                    command=self.open_file).pack(side=tk.LEFT)
-        self.cam_btn = ttk.Button(toolbar, text="Камера: стоп", style="Tool.TButton",
+        self.cam_btn = ttk.Button(toolbar, text="Камера: пуск", style="Tool.TButton",
                                   command=self.toggle_camera)
         self.cam_btn.pack(side=tk.LEFT, padx=6)
         ttk.Button(toolbar, text="Захват кадра", style="Tool.TButton",
@@ -278,6 +279,11 @@ class VerifierApp:
         data = ttk.Frame(self.notebook)
         self.notebook.add(data, text=" Данные ")
         self.data_tab = data
+        self.results = []
+        self.result_index = 0
+        self.code_selector = ttk.Combobox(data, state="readonly", width=26)
+        self.code_selector.pack(anchor="w", pady=(2, 4))
+        self.code_selector.bind("<<ComboboxSelected>>", lambda e: self._on_select_code())
         self.content_var = tk.StringVar(value="—")
         self.data_cards = []
         self.copy_all_btn = ttk.Button(data, text="Скопировать содержимое",
@@ -375,18 +381,48 @@ class VerifierApp:
         except ValueError:
             um = 10.0
         try:
-            res = analyze(self.frame_bgr, um_per_px=um)
-            self.regions = problem_regions(res)
+            results = analyze_all(self.frame_bgr, um_per_px=um)
         finally:
             self.busy = False
-        self.result = res
-        self.focus_index = None
+        if not results:
+            r = Result()
+            r.error = "Код не найден"
+            results = [r]
+        self.results = results
+        self.result_index = 0
+        self._set_result(0)
         self.root.after(0, self._render)
+
+    def _set_result(self, idx):
+        self.result_index = idx
+        self.result = self.results[idx]
+        self.regions = problem_regions(self.result)
+        self.focus_index = None
+
+    def _on_select_code(self):
+        idx = self.code_selector.current()
+        if 0 <= idx < len(self.results):
+            self._set_result(idx)
+            self._render(update_history=False)
+
+    def _update_code_selector(self):
+        names = []
+        for i, r in enumerate(self.results):
+            if r.error or r.symbol is None:
+                names.append(f"Код {i + 1}: не найден")
+            else:
+                g = f"{r.min_grade:.1f}".replace(".", ",")
+                names.append(f"Код {i + 1}: {g}/4"
+                             + (f" ({len(r.elements)} AI)" if r.elements else ""))
+        self.code_selector["values"] = names
+        if names:
+            self.code_selector.current(self.result_index)
 
     # ----------------------------------------------------------- render
 
-    def _render(self):
+    def _render(self, update_history=True):
         res = self.result
+        self._update_code_selector()
         self._refresh_scene()
 
         if res.error or res.symbol is None:
@@ -395,7 +431,8 @@ class VerifierApp:
             self._render_defects([])
             self._render_data([])
             self._render_report(res)
-            self._add_history(res)
+            if update_history:
+                self._add_history(res)
             return
 
         score, color = score_of(res)
@@ -409,7 +446,8 @@ class VerifierApp:
         self._render_defects(res)
         self._render_data(res)
         self._render_report(res)
-        self._add_history(res)
+        if update_history:
+            self._add_history(res)
 
     def _set_verdict(self, text, color, reason):
         self.verdict_var.set(text)
@@ -541,7 +579,7 @@ class VerifierApp:
             w.destroy()
         if not res:
             return
-        self.content_var.set(res.content or "")
+        self.content_var.set(plain_content(res))
         self.copy_all_btn.configure(
             state=tk.NORMAL if res.content else tk.DISABLED,
             text="Скопировать содержимое" + (f" ({len(res.elements)} AI)"
@@ -650,6 +688,8 @@ class VerifierApp:
     def _show_history(self, idx):
         e = self.history[idx]
         self.frame_bgr = e["frame"]
+        self.results = [e["res"]]
+        self.result_index = 0
         self.result = e["res"]
         self.regions = problem_regions(e["res"])
         self.zoom = 1.0
@@ -725,11 +765,16 @@ class VerifierApp:
                 pts.append((px, py))
             return pts
 
-        if self.result is not None and self.result.corner_points is not None:
-            pts = self.result.corner_points.astype(np.float32)
+        for ri, r in enumerate(self.results):
+            if r.corner_points is None:
+                continue
+            pts = r.corner_points.astype(np.float32)
             ring = map_poly(pts)
             ring.append(ring[0])
-            d.line(ring, fill=(46, 125, 50, 255), width=3)
+            if ri == self.result_index:
+                d.line(ring, fill=(46, 125, 50, 255), width=3)
+            else:
+                d.line(ring, fill=(144, 164, 174, 255), width=2)
 
         for i, reg in enumerate(self.regions):
             poly = map_poly(reg["poly"])

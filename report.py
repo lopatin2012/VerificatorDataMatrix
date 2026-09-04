@@ -64,6 +64,16 @@ def _annotated_image(frame_bgr, res):
     return img
 
 
+def _clean_para(s):
+    """Make arbitrary text safe for a reportlab Paragraph.
+
+    Escape XML metacharacters and drop control chars (the GS separator, etc.)
+    that would otherwise break the paragraph parser or the PDF text stream.
+    """
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return "".join(ch if ch >= " " or ch in "\n\t\r" else " " for ch in s)
+
+
 def build_pdf(res, frame_bgr, path):
     """Write an official verification report to `path`."""
     _register_fonts()
@@ -103,16 +113,17 @@ def build_pdf(res, frame_bgr, path):
 
     # Info block
     cell = ParagraphStyle("infocell", fontName=FB, fontSize=9, leading=12)
+    size_txt = f"{res.symbol.rows}x{res.symbol.cols}" if res.symbol else "—"
+    xd = f"{res.x_dim_um:.0f}" if res.x_dim_um is not None else "—"
+    yd = f"{res.y_dim_um:.0f}" if res.y_dim_um is not None else "—"
+    ap = f"{res.aperture_um} мкм" if res.aperture_um is not None else "—"
     info = [
-        ["Класс символа", res.overall_class, "Валидация",
-         "OK" if res.validation == "OK" else "БРАК"],
+        ["Класс символа", res.overall_class or "—", "Штрих-код", "GS1 DataMatrix"],
         ["Содержимое",
-         Paragraph(res.content or "(не декодировано)", cell), "Штрих-код",
-         "GS1 DataMatrix"],
-        ["Размер символа", f"{res.symbol.rows}x{res.symbol.cols}", "Апертура",
-         f"{res.aperture_um} мкм"],
-        ["X-размерность", f"{res.x_dim_um:.0f} мкм", "Y-размерность",
-         f"{res.y_dim_um:.0f} мкм"],
+         Paragraph(_clean_para(res.content or "(не декодировано)"), cell), "Размер символа",
+         size_txt],
+        ["X-размерность", xd, "Y-размерность", yd],
+        ["Апертура", ap, "", ""],
     ]
     info_table = Table(info, colWidths=[38 * mm, 55 * mm, 38 * mm, 45 * mm])
     info_table.setStyle(TableStyle([
@@ -131,13 +142,28 @@ def build_pdf(res, frame_bgr, path):
     story.append(info_table)
     story.append(Spacer(1, 4 * mm))
 
+    # Prominent validation verdict, centered above the image block
+    val_ok = res.validation == "OK"
+    val_style = ParagraphStyle(
+        "valbig", fontName=FB, fontSize=20, leading=24, alignment=TA_CENTER,
+        textColor=colors.HexColor("#2e7d32") if val_ok else colors.HexColor("#c62828"))
+    story.append(Paragraph("Валидация: " + ("OK" if val_ok else "БРАК"), val_style))
+    story.append(Spacer(1, 6 * mm))
+
     # Image with located code
     story.append(Paragraph("Расположение кода", s_h))
     img = _annotated_image(frame_bgr, res)
     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     tmp.close()
     cv2.imwrite(tmp.name, img)
-    pil = Image(tmp.name, width=170 * mm, height=170 * mm * frame_bgr.shape[0] / frame_bgr.shape[1])
+    fw, fh = frame_bgr.shape[1], frame_bgr.shape[0]
+    img_w = 160 * mm
+    img_h = img_w * fh / fw
+    max_h = 130 * mm
+    if img_h > max_h:
+        img_h = max_h
+        img_w = img_h * fw / fh
+    pil = Image(tmp.name, width=img_w, height=img_h)
     pil.hAlign = "CENTER"
     story.append(pil)
     story.append(Spacer(1, 4 * mm))
@@ -147,7 +173,8 @@ def build_pdf(res, frame_bgr, path):
     header = [["Параметр", "Значение", "Статус"]]
     rows = []
     for p in res.params:
-        rows.append([p.name, p.display, "OK" if p.passed else "FAIL"])
+        status = "OK" if p.level == "ok" else ("Предупреждение" if p.level == "warn" else "Ошибка")
+        rows.append([p.name, p.display, status])
     data = header + rows
     pt = Table(data, colWidths=[75 * mm, 55 * mm, 40 * mm],
                repeatRows=1)
@@ -167,7 +194,8 @@ def build_pdf(res, frame_bgr, path):
         if i % 2 == 0:
             style.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#f3f5f9")))
     for i, p in enumerate(res.params, start=1):
-        c = colors.HexColor("#2e7d32") if p.passed else colors.HexColor("#c62828")
+        c = colors.HexColor("#2e7d32") if p.level == "ok" else (
+            colors.HexColor("#b8860b") if p.level == "warn" else colors.HexColor("#c62828"))
         style.append(("TEXTCOLOR", (2, i), (2, i), c))
     pt.setStyle(TableStyle(style))
     story.append(pt)
@@ -179,9 +207,9 @@ def build_pdf(res, frame_bgr, path):
         cell = ParagraphStyle("cell", fontName=F, fontSize=8.5, leading=11)
         gdata = [["Элемент", "Значение", "Описание"]]
         for el in res.elements:
-            gdata.append([Paragraph(el.display_name(), cell),
-                          Paragraph(el.value, cell),
-                          Paragraph(el.description, cell)])
+            gdata.append([Paragraph(_clean_para(el.display_name()), cell),
+                          Paragraph(_clean_para(el.value), cell),
+                          Paragraph(_clean_para(el.description), cell)])
         gt = Table(gdata, colWidths=[35 * mm, 80 * mm, 55 * mm], repeatRows=1)
         gt.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, 0), FB),

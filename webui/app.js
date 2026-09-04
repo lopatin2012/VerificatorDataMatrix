@@ -2,6 +2,8 @@
 
 const state = {
   result: null,
+  results: [],
+  current: 0,
   img: null,           // Image object of the base frame
   zoom: 1,
   rotate: 0,
@@ -11,6 +13,34 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopy(text));
+  }
+  return Promise.resolve(fallbackCopy(text));
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+function flashCopy(btn, ok) {
+  const old = btn.textContent;
+  btn.textContent = ok ? "✓ Скопировано" : "Ошибка копирования";
+  btn.disabled = true;
+  setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 1200);
+}
 
 async function fetchVersion() {
   try {
@@ -84,112 +114,162 @@ function drawScene() {
   const ctx = canvas.getContext("2d");
   const cw = canvas.clientWidth || 600;
   const ch = canvas.clientHeight || 400;
+  if (canvas.width !== cw) canvas.width = cw;
+  if (canvas.height !== ch) canvas.height = ch;
 
-  // figure display transform
-  let w = state.img.naturalWidth, h = state.img.naturalHeight;
-  let rot = state.rotate % 4;
-  let rw = (rot % 2) ? h : w;
-  let rh = (rot % 2) ? w : h;
+  // figure display transform: same mapping drives both drawImage and toCanvas
+  const w = state.img.naturalWidth, h = state.img.naturalHeight;
+  const rot = state.rotate % 4;
+  const rw = (rot % 2) ? h : w;   // on-screen width after rotation
+  const rh = (rot % 2) ? w : h;   // on-screen height after rotation
   const scale = Math.min(cw / rw, ch / rh) * state.zoom;
-  const tw = rw * scale, th = rh * scale;
+  const fitW = rw * scale, fitH = rh * scale;
+
+  // drawing box in the rotated local frame
+  let localW = fitW, localH = fitH;
+  if (rot % 2) { localW = fitH; localH = fitW; }
 
   ctx.clearRect(0, 0, cw, ch);
   ctx.save();
-  ctx.translate((cw - tw) / 2, (ch - th) / 2);
+  ctx.translate(cw / 2, ch / 2);
   if (rot) ctx.rotate(rot * Math.PI / 2);
 
   // channel filter
   ctx.filter = "none";
   if (state.channel === "gray") ctx.filter = "grayscale(1)";
   else if (state.channel === "ir") ctx.filter = "grayscale(1) contrast(1.6)";
-
-  const dw = (rot % 2) ? th : tw;
-  const dh = (rot % 2) ? tw : th;
-  const offx = (rot % 2) ? (tw - dw) / 2 : 0;
-  const offy = (rot % 2) ? (th - dh) / 2 : 0;
-  ctx.drawImage(state.img, offx, offy, dw, dh);
+  ctx.drawImage(state.img, -localW / 2, -localH / 2, localW, localH);
   ctx.filter = "none";
+  ctx.restore();
 
-  // map original image coords -> canvas coords
+  // map original image coords -> canvas coords. toCanvas returns ABSOLUTE
+  // canvas coordinates, so the overlay must be drawn in the identity
+  // transform (not inside the translate/rotate used for drawImage).
+  const sx = localW / w, sy = localH / h;
   const toCanvas = (x, y) => {
-    let px = x, py = y;
-    for (let k = 0; k < rot; k++) {  // np.rot90 ccw
-      const nx = w - 1 - py, ny = px;
-      px = nx; py = ny;
+    const lx = x * sx - localW / 2, ly = y * sy - localH / 2;
+    let rx, ry;
+    switch (rot) {
+      case 0: rx = lx; ry = ly; break;
+      case 1: rx = -ly; ry = lx; break;
+      case 2: rx = -lx; ry = -ly; break;
+      default: rx = ly; ry = -lx; break;
     }
-    return [px * scale + (cw - tw) / 2, py * scale + (ch - th) / 2];
+    return [cw / 2 + rx, ch / 2 + ry];
   };
 
-  // symbol outline
-  if (state.result && state.result.corners) {
-    const c = state.result.corners;
-    ctx.beginPath();
-    const p0 = toCanvas(c[0], c[1]);
-    ctx.moveTo(p0[0], p0[1]);
-    for (let k = 2; k < c.length; k += 2) {
-      const p = toCanvas(c[k], c[k + 1]);
-      ctx.lineTo(p[0], p[1]);
+  // symbol outlines + heatmap for every detected code
+  const sevColor = { critical: "#e53935", warning: "#fdd835", minor: "#fb8c00" };
+  (state.results || []).forEach((r, ri) => {
+    const isCur = ri === state.current;
+    if (r.corners) {
+      const c = r.corners;
+      ctx.beginPath();
+      const p0 = toCanvas(c[0], c[1]);
+      ctx.moveTo(p0[0], p0[1]);
+      for (let k = 2; k < c.length; k += 2) {
+        const p = toCanvas(c[k], c[k + 1]);
+        ctx.lineTo(p[0], p[1]);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = isCur ? "#2e7d32" : "#90a4ae";
+      ctx.lineWidth = isCur ? 3 : 1.5;
+      ctx.stroke();
     }
-    ctx.closePath();
-    ctx.strokeStyle = "#2e7d32";
-    ctx.lineWidth = 3;
-    ctx.stroke();
-  }
-
-  // heatmap polygons
-  const sevColor = { critical: "#e53935", warning: "#fb8c00", minor: "#fdd835" };
-  (state.result?.regions || []).forEach((reg, i) => {
-    const pts = [];
-    for (let k = 0; k < reg.poly.length; k += 2) {
-      pts.push(toCanvas(reg.poly[k], reg.poly[k + 1]));
-    }
-    if (pts.length < 3) return;
-    const focus = state.focus === i;
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0], pts[0][1]);
-    for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
-    ctx.closePath();
-    ctx.fillStyle = sevColor[reg.severity] || "#e53935";
-    ctx.globalAlpha = focus ? 0.75 : 0.35;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = sevColor[reg.severity];
-    ctx.lineWidth = focus ? 4 : 2;
-    ctx.stroke();
+    if (!isCur) return;
+    (r.regions || []).forEach((reg, i) => {
+      const pts = [];
+      for (let k = 0; k < reg.poly.length; k += 2) {
+        pts.push(toCanvas(reg.poly[k], reg.poly[k + 1]));
+      }
+      if (pts.length < 3) return;
+      const focus = state.focus === i;
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+      ctx.closePath();
+      ctx.fillStyle = sevColor[reg.severity] || "#e53935";
+      ctx.globalAlpha = focus ? 0.75 : 0.35;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = sevColor[reg.severity];
+      ctx.lineWidth = focus ? 4 : 2;
+      ctx.stroke();
+    });
   });
-  ctx.restore();
 }
 
 // ------------------------------------------------------------- rendering
 
 function render(data) {
-  state.result = data;
+  state.results = Array.isArray(data.results) && data.results.length
+    ? data.results
+    : (data.result_id ? [data] : []);
+  state.current = 0;
+  state.focus = null;
+  renderCodeSelect();
+  if (state.results.length) {
+    renderResult(state.results[0]);
+  } else {
+    $("validation").textContent = data.error || "Код не найден";
+    $("validation").style.color = "#c62828";
+    $("score").textContent = "—";
+    $("grade").textContent = "—";
+    $("verdict").textContent = "БРАК";
+    $("reason").textContent = data.error || "Код не найден";
+  }
+  drawScene();
+}
+
+function renderCodeSelect() {
+  const wrap = $("codeselect");
+  wrap.innerHTML = "";
+  if (!state.results.length) return;
+  state.results.forEach((r, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn small codesel-btn" + (i === state.current ? " active" : "");
+    const grade = r.min_grade != null ? r.min_grade.toFixed(1).replace(".", ",") : "—";
+    btn.textContent = "Код " + (i + 1) + " — " + grade;
+    btn.addEventListener("click", () => {
+      state.current = i;
+      state.focus = null;
+      renderCodeSelect();
+      renderResult(r);
+      drawScene();
+    });
+    wrap.appendChild(btn);
+  });
+}
+
+function renderResult(r) {
+  state.result = r;
   state.focus = null;
 
-  const good = data.good;
+  const good = r.good;
   const vcolor = good ? "#2e7d32" : "#c62828";
   const val = $("validation");
-  val.textContent = "Валидация: " + (data.validation === "OK" ? "ОК" : "БРАК");
+  val.textContent = "Валидация: " + (r.validation === "OK" ? "ОК" : "БРАК");
   val.style.color = vcolor;
 
   const scoreEl = $("score");
-  scoreEl.innerHTML = data.score + '<span class="of"> из 100</span>';
-  scoreEl.style.color = data.color;
-  $("grade").textContent = "Грейд " + data.min_grade.toFixed(1).replace(".", ",") +
-    (data.symbol_size ? " / " + data.symbol_size : "");
+  scoreEl.innerHTML = r.score + '<span class="of"> из 100</span>';
+  scoreEl.style.color = r.color;
+  $("grade").textContent = "Грейд " + r.min_grade.toFixed(1).replace(".", ",") +
+    (r.symbol_size ? " / " + r.symbol_size : "");
   $("grade").style.color = vcolor;
-  drawGauge(data.score, data.color);
+  drawGauge(r.score, r.color);
 
   $("verdict").textContent = good ? "ГОДЕН" : "БРАК";
   $("verdict").style.color = good ? "#2e7d32" : "#c62828";
-  const reason = (data.params || []).find(p => !p.passed);
+  const reason = (r.params || []).find(p => !p.passed);
   $("reason").textContent = reason ? (reason.name + ": " + reason.value)
-    : (data.error || "Все параметры в норме");
+    : (r.error || "Все параметры в норме");
 
-  renderParams(data);
-  renderDefects(data);
-  renderData(data);
-  renderReport(data);
+  renderParams(r);
+  renderDefects(r);
+  renderData(r);
+  renderReport(r);
 }
 
 function renderParams(data) {
@@ -206,7 +286,7 @@ function renderParams(data) {
   keys.forEach(k => {
     const p = (data.params || []).find(x => x.name === map[k]);
     const grade = p ? p.grade : 0;
-    const color = grade >= 4 ? "#2e7d32" : (grade >= 2 ? "#f9a825" : "#c62828");
+    const color = grade >= 3 ? "#2e7d32" : (grade >= 2 ? "#fdd835" : "#c62828");
     const row = document.createElement("div");
     row.className = "param";
     row.innerHTML =
@@ -220,18 +300,20 @@ function renderParams(data) {
 function renderDefects(data) {
   const wrap = $("defects");
   wrap.innerHTML = "";
-  const bad = (data.params || []).filter(p => !p.passed);
+  const bad = (data.params || []).filter(p => p.level && p.level !== "ok");
   if (!bad.length) {
     wrap.innerHTML = '<div class="defect" style="border-color:#2e7d32"><div class="dtitle">Все параметры в норме ✅</div></div>';
     return;
   }
   bad.forEach((p, i) => {
-    const sev = p.grade <= 1 ? "critical" : (p.grade <= 3 ? "warning" : "minor");
-    const icon = p.grade <= 1 ? "🚫" : (p.grade <= 3 ? "⚠️" : "🟡");
-    const cls = sev === "critical" ? "" : (sev === "warning" ? "warn" : "minor");
+    const isErr = p.level === "error";
+    const icon = isErr ? "🚫" : "⚠️";
+    const status = isErr ? "Ошибка" : "Предупреждение";
+    const cls = isErr ? "" : "warn";
     const d = document.createElement("div");
     d.className = "defect " + cls;
     d.innerHTML = '<div class="dtitle">' + icon + " " + p.name + ": " + p.value + '</div>' +
+      '<div class="dstatus">' + status + '</div>' +
       '<div class="drec">' + recommend(p.name) + '</div>' +
       '<button class="ccopy" data-i="' + i + '">Показать на коде</button>';
     wrap.appendChild(d);
@@ -264,8 +346,8 @@ function renderData(data) {
     chip.innerHTML = '<div class="cname">' + el.name + '</div>' +
       '<div class="cval">' + el.value + '</div>' +
       '<button class="ccopy">Копировать</button>';
-    chip.querySelector(".ccopy").addEventListener("click", () => {
-      navigator.clipboard.writeText(el.value);
+    chip.querySelector(".ccopy").addEventListener("click", (e) => {
+      copyText(el.value).then(ok => flashCopy(e.target, ok));
     });
     wrap.appendChild(chip);
   });
@@ -296,7 +378,7 @@ function renderReport(data) {
 
 function setImage(dataUrl) {
   const img = new Image();
-  img.onload = () => { state.img = img; drawScene(); };
+  img.onload = () => { state.img = img; $("dropmsg").hidden = true; drawScene(); };
   img.src = dataUrl;
 }
 
@@ -381,22 +463,27 @@ function wireControls() {
   $("zoomout").addEventListener("click", () => { state.zoom = Math.max(0.5, state.zoom - 0.25); drawScene(); });
   $("rotate").addEventListener("click", () => { state.rotate++; drawScene(); });
   $("channel").addEventListener("change", (e) => { state.channel = e.target.value; drawScene(); });
-  $("copyall").addEventListener("click", () => {
-    if (state.result && state.result.content) navigator.clipboard.writeText(state.result.content);
+  $("copyall").addEventListener("click", (e) => {
+    if (state.result && state.result.content) {
+      const text = state.result.content_plain || state.result.content.replace(/[()]/g, "");
+      copyText(text).then(ok => flashCopy(e.target, ok));
+    }
   });
-  document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
-    t.classList.add("active");
-    ["defects", "data", "report"].forEach(id => $(id).classList.toggle("hidden", id !== t.dataset.tab));
-  }));
   $("pdfbtn").addEventListener("click", async () => {
-    if (!state.result || !state.result.result_id) return;
+    const cur = state.results[state.current];
+    if (!cur || !cur.result_id) return;
     const resp = await fetch("api/pdf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ result_id: state.result.result_id }),
+      body: JSON.stringify({ result_id: cur.result_id }),
     });
-    if (!resp.ok) { $("validation").textContent = "Ошибка PDF"; return; }
+    if (!resp.ok) {
+      let msg = "Ошибка PDF";
+      try { msg = (await resp.json()).error || msg; } catch (e) { /* non-JSON body */ }
+      $("validation").textContent = msg;
+      $("validation").style.color = "#c62828";
+      return;
+    }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

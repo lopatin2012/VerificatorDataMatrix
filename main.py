@@ -30,7 +30,7 @@ def print_report(res, path):
           f"Апертура: {res.aperture_um} мкм")
     print("-" * 60)
     for p in res.params:
-        mark = "OK " if p.passed else "FAIL"
+        mark = "OK  " if p.level == "ok" else ("WARN" if p.level == "warn" else "FAIL")
         print(f"  [{mark}] {p.name}: {p.display}")
     print("-" * 60)
     for el in res.elements:

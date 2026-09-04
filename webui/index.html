@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DataMatrix Verifier</title>
+  <link rel="icon" href="favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,7 +16,6 @@
         <span id="version" class="muted"></span>
       </div>
     </div>
-    <div id="validation" class="validation muted">Ожидание изображения</div>
   </header>
 
   <main>
@@ -27,7 +27,7 @@
         <div id="dropmsg">
           <div class="dropicon">⇪</div>
           <p>Перетащите изображение или нажмите для выбора</p>
-          <button id="cambtn" class="btn" type="button">📷 Снять с камеры</button>
+          <button id="cambtn" class="btn" type="button">📷 Проверить DM</button>
           <video id="video" autoplay playsinline hidden></video>
         </div>
       </div>
@@ -47,6 +47,7 @@
 
     <section class="card health">
       <div class="card-head"><span class="bar"></span>Качество и статус</div>
+      <div id="validation" class="validation muted">Ожидание изображения</div>
       <div id="score" class="score">—</div>
       <div id="grade" class="grade muted">—</div>
       <svg id="gauge" viewBox="0 0 200 132" width="210"></svg>
@@ -55,21 +56,24 @@
       <hr>
       <div class="minih">Ключевые параметры</div>
       <div id="params"></div>
+      <div class="block">
+        <div class="block-title">Дефекты</div>
+        <div id="defects"></div>
+      </div>
     </section>
 
     <section class="card diag">
       <div class="card-head"><span class="bar"></span>Диагностика и данные</div>
-      <div class="tabs">
-        <button class="tab active" data-tab="defects">Дефекты</button>
-        <button class="tab" data-tab="data">Данные</button>
-        <button class="tab" data-tab="report">Отчёт</button>
-      </div>
-      <div id="defects" class="tabpanel"></div>
-      <div id="data" class="tabpanel hidden">
-        <button class="btn small" id="copyall" type="button">Скопировать содержимое</button>
+      <div class="codesel" id="codeselect"></div>
+      <div class="block">
+        <div class="block-title">Данные</div>
+        <div class="datacopy">
+          <button class="btn small" id="copyall" type="button">Скопировать содержимое</button>
+        </div>
         <div id="chips" class="chips"></div>
       </div>
-      <div id="report" class="tabpanel hidden">
+      <div class="block">
+        <div class="block-title">Отчёт</div>
         <pre id="reporttext"></pre>
         <button class="btn" id="pdfbtn" type="button">⬇ Сформировать PDF отчёт</button>
       </div>

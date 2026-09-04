@@ -14,7 +14,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from PIL import Image
 
 from report import build_pdf
-from verifier import analyze, to_dict
+from verifier import analyze_all, to_dict
 from version import VERSION
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,6 +37,11 @@ def index():
 @app.get("/api/version")
 def api_version():
     return jsonify({"version": VERSION})
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return send_from_directory(BASE_DIR, "favicon.ico")
 
 
 @app.get("/<path:filename>")
@@ -68,19 +73,24 @@ def api_analyze():
     um = request.form.get("um_per_px", type=float, default=10.0)
     try:
         with ANALYZE_LOCK:
-            res = analyze(img, um_per_px=um)
+            results = analyze_all(img, um_per_px=um)
     except Exception as exc:
         return jsonify({"error": f"Ошибка анализа: {exc}"}), 500
 
-    rid = uuid.uuid4().hex[:12]
-    RESULTS[rid] = (res, img)
-    RESULTS_ORDER.append(rid)
-    if len(RESULTS_ORDER) > RESULTS_MAX:
-        old = RESULTS_ORDER.pop(0)
-        RESULTS.pop(old, None)
+    if not results:
+        return jsonify({"error": "Код не найден"}), 200
 
-    payload = to_dict(res)
-    payload["result_id"] = rid
+    payload = {"image": "", "results": []}
+    for res in results:
+        rid = uuid.uuid4().hex[:12]
+        RESULTS[rid] = (res, img)
+        RESULTS_ORDER.append(rid)
+        if len(RESULTS_ORDER) > RESULTS_MAX:
+            old = RESULTS_ORDER.pop(0)
+            RESULTS.pop(old, None)
+        d = to_dict(res)
+        d["result_id"] = rid
+        payload["results"].append(d)
 
     # base image (no overlay); heatmap is drawn client-side for interactivity
     pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -100,7 +110,10 @@ def api_pdf():
         return jsonify({"error": "Результат не найден (истёк)"}), 404
     res, img = entry
     pdf_path = os.path.join(BASE_DIR, "webui", "_report.pdf")
-    build_pdf(res, img, pdf_path)
+    try:
+        build_pdf(res, img, pdf_path)
+    except Exception as exc:
+        return jsonify({"error": f"Ошибка формирования PDF: {exc}"}), 500
     return send_file(pdf_path, as_attachment=True,
                      download_name=f"verification_{rid}.pdf",
                      mimetype="application/pdf")

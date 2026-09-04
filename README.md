@@ -26,37 +26,37 @@
 
 ## Установка
 
-Python 3.13 (на этой машине pip установлен только у Python 3.13;
-`python` в PATH указывает на 3.14 без pip — используйте 3.13).
+Используйте venv из репозитория (`.venv`, Python 3.13). Внутри репозитория
+`python` в PATH уже резолвится в `.venv\Scripts\python.exe`.
 
 ```
-C:\Users\admin\AppData\Local\Programs\Python\Python313\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 ## Запуск
 
 GUI:
 ```
-py -3.13 main.py --gui
+.venv\Scripts\python.exe main.py --gui
 ```
 
 Web-сервис (доступен любому в сети, порт 8000):
 ```
-py -3.13 main.py --web --host 0.0.0.0 --port 8000
+.venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8000
 # или напрямую
-py -3.13 webapp.py --host 0.0.0.0 --port 8000
+.venv\Scripts\python.exe webapp.py --host 0.0.0.0 --port 8000
 ```
 В браузере: загрузка файла или перетаскивание изображения, съёмка с камеры
 (getUserMedia), дашборд с gauge/вердиктом/дефектами, скачивание PDF-отчёта.
 
 Один файл:
 ```
-py -3.13 main.py --file samples/G4_1.jpg
+.venv\Scripts\python.exe main.py --file samples/G4_1.jpg
 ```
 
 Папка с изображениями:
 ```
-py -3.13 main.py --dir samples
+.venv\Scripts\python.exe main.py --dir samples
 ```
 
 Калибровка (мкм/пиксель) задаётся флагом `--um-per-px` или полем в UI.

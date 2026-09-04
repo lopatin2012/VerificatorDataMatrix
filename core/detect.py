@@ -14,6 +14,8 @@ class Symbol:
         self.reflectance = None  # float (rows x cols)
         self.inverted = False
         self.l_corner = None     # 'tl' | 'tr' | 'bl' | 'br'
+        self.can_bw = None       # canonical binarized warped (dark=True)
+        self.can_rect = None     # symbol rect (x0, y0, x1, y1) in can_bw
 
 
 def _binarize(gray):
@@ -213,6 +215,8 @@ def extract_grid(gray, corners, warp_size=800, known_size=None):
     sym.module_px = mod
     sym.orientation = ori
     sym.reflectance = ref
+    sym.can_bw = np.rot90(bw, ori)
+    sym.can_rect = cr
     thresh = _otsu_1d(ref)
     sym.grid = ref < thresh if not inverted else ref > thresh
     sym.l_corner = corner_name

@@ -13,6 +13,7 @@ class Result:
     def __init__(self):
         self.ok = False
         self.content = None
+        self.content_raw = None
         self.symbology = "GS1 DataMatrix"
         self.min_grade = None
         self.min_reflectance = None
@@ -32,10 +33,36 @@ class Result:
 
 
 def analyze(img, um_per_px=10.0):
-    """Analyze one image (BGR color or grayscale). Returns a Result."""
+    """Analyze one image (BGR color or grayscale). Returns a Result for the
+    first detected DataMatrix, or a Result with error="Код не найден"."""
+    results = analyze_all(img, um_per_px)
+    if results:
+        return results[0]
     res = Result()
-    dec = decode.decode(img)
+    res.error = "Код не найден"
+    return res
 
+
+def analyze_all(img, um_per_px=10.0):
+    """Analyze ALL DataMatrix codes found in one image.
+
+    Returns a list of Result, one per detected symbol (deduplicated by
+    position), sorted so the BEST reading comes first (highest grade,
+    decoded before undecoded). Each Result grades its own symbol; undecoded
+    symbols are included with validation="FAIL".
+    """
+    results = []
+    for dec in decode.decode_all(img):
+        res = _analyze_one(img, dec, um_per_px)
+        if res is not None:
+            results.append(res)
+    results.sort(key=lambda r: ((r.min_grade if r.min_grade is not None else 0.0),
+                                r.validation == "OK"), reverse=True)
+    return results
+
+
+def _analyze_one(img, dec, um_per_px):
+    res = Result()
     gray = getattr(dec, "gray", None)
     if gray is None:
         gray = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -45,8 +72,7 @@ def analyze(img, um_per_px=10.0):
         sym = detect.extract_grid(gray, dec.quad)
 
     if sym is None:
-        res.error = "Код не найден"
-        return res
+        return None
 
     res.symbol = sym
     res.ok = True
@@ -54,6 +80,7 @@ def analyze(img, um_per_px=10.0):
 
     if dec.ok:
         res.content = dec.text
+        res.content_raw = dec.bytes.decode("latin-1") if dec.bytes else None
         res.elements = parse(dec.bytes if dec.bytes else dec.text)
 
     params = grade.grade_symbol(sym, decoded=dec.ok)
@@ -114,6 +141,19 @@ def is_good(res):
     return res.validation == "OK" and not res.error and res.min_grade > 1.5
 
 
+def plain_content(res):
+    """Copy-friendly content: no AI parens, no GS/FS/RS separators.
+
+    Prefers the raw bytes (content_raw) with control separators stripped;
+    falls back to the HRI text with parens removed.
+    """
+    if res.content_raw:
+        return res.content_raw.replace("\x1d", "").replace("\x1c", "").replace("\x1e", "")
+    if res.content:
+        return res.content.replace("(", "").replace(")", "")
+    return ""
+
+
 def to_dict(res):
     """Serialize a Result into a plain JSON-friendly dict."""
     score, color = score_of(res)
@@ -122,6 +162,8 @@ def to_dict(res):
         "ok": res.ok and not res.error,
         "error": res.error,
         "content": res.content,
+        "content_raw": res.content_raw,
+        "content_plain": plain_content(res),
         "symbology": res.symbology,
         "validation": res.validation,
         "good": good,
@@ -134,7 +176,8 @@ def to_dict(res):
         "aperture_um": res.aperture_um,
         "symbol_size": f"{res.symbol.rows}x{res.symbol.cols}" if res.symbol else None,
         "params": [
-            {"name": p.name, "value": p.value, "grade": p.grade, "passed": p.passed}
+            {"name": p.name, "value": p.value, "grade": p.grade,
+             "passed": p.passed, "level": p.level}
             for p in res.params
         ],
         "elements": [
@@ -206,26 +249,28 @@ def problem_regions(res):
     for p in res.params:
         grade_map[p.name] = p.grade
 
-    def add(name, label, sev, poly):
-        if grade_map.get(name, 4) < 4:
+    def add(name, label, poly):
+        g = grade_map.get(name, 4)
+        if g < 3:
+            sev = "critical" if g <= 1 else "warning"
             regions.append({"label": label, "severity": sev, "poly": poly})
 
     whole = quad(tl, tr, br, bl)
-    add("Размерность печати X", "Размерность печати", "warning", whole)
-    add("Осевая неоднородность", "Осевая неоднородность", "minor", whole)
-    add("Левая часть шаблона \"L\"", "Левая часть шаблона L", "critical",
+    add("Размерность печати X", "Размерность печати", whole)
+    add("Осевая неоднородность", "Осевая неоднородность", whole)
+    add("Левая часть шаблона \"L\"", "Левая часть шаблона L",
         sub_quad(0, 0.1, 0.18, 0.9))
-    add("Нижняя часть шаблона \"L\"", "Нижняя часть шаблона L", "critical",
+    add("Нижняя часть шаблона \"L\"", "Нижняя часть шаблона L",
         sub_quad(0.1, 0.82, 0.9, 1.0))
-    add("Последовательность тактовых модулей", "Тактовые модули", "warning",
+    add("Последовательность тактовых модулей", "Тактовые модули",
         sub_quad(0.6, 0.0, 1.0, 0.4))
-    add("Контраст символа", "Контраст", "warning", sub_quad(0.0, 0.0, 0.35, 0.35))
-    add("Запас по коэффициенту отражения", "Отражение", "warning",
+    add("Контраст символа", "Контраст", sub_quad(0.0, 0.0, 0.35, 0.35))
+    add("Запас по коэффициенту отражения", "Отражение",
         sub_quad(0.0, 0.0, 0.35, 0.35))
-    add("Неоднородность освещения", "Неравномерность освещения", "warning",
+    add("Неоднородность освещения", "Неравномерность освещения",
         sub_quad(0.0, 0.0, 1.0, 0.5))
-    add("Запас коррекции ошибок", "Малый запас коррекции", "critical", whole)
-    add("Декодирование", "Код не декодируется", "critical", whole)
+    add("Запас коррекции ошибок", "Малый запас коррекции", whole)
+    add("Декодирование", "Код не декодируется", whole)
 
     # dedupe identical polygons
     seen = set()

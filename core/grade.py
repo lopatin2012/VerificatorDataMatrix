@@ -15,7 +15,16 @@ class Param:
 
     @property
     def passed(self):
-        return self.grade >= 4
+        return self.grade >= 3
+
+    @property
+    def level(self):
+        """Status level for display: 'ok' | 'warn' | 'error'."""
+        if self.grade >= 3:
+            return "ok"
+        if self.grade >= 2:
+            return "warn"
+        return "error"
 
     @property
     def display(self):
@@ -267,35 +276,57 @@ def _edge_run_lengths(grid):
 
 
 def _print_growth(sym):
-    """Print growth in px and % from data-region dark run lengths.
+    """Print growth in px and % from the PHYSICAL widths of the timing
+    modules on the TOP row of the canonical grid.
 
-    For a random 50%-density module pattern the expected mean dark run is
-    2 modules; deviations indicate module growth/shrinkage.
+    The timing pattern is a fixed dark/light alternation of single modules.
+    Print growth makes dark runs wider than light runs. We use the
+    dark-vs-light run imbalance, which is robust to edge blur / anti-aliasing
+    and does NOT depend on the encoded data. The top row is used for both
+    axes because the right-column timing sits on the code's blurry edge and
+    gives unreliable measurements on photos; print growth is isotropic in
+    practice.
     """
-    grid = sym.grid
-    mod = sym.module_px
-    runs = []
-    n_rows, n_cols = grid.shape
-    for r in range(2, n_rows - 1):
-        line = grid[r, 1:-1]
+    bw = sym.can_bw
+    if bw is None or sym.can_rect is None:
+        return (0, 0), (0, 0)
+    x0, y0, x1, y1 = sym.can_rect
+    n_cols = max(1, sym.cols)
+    mod_x = (x1 - x0) / n_cols
+    mod_y = (y1 - y0) / max(1, sym.rows)
+    if mod_x < 1 or mod_y < 1:
+        return (0, 0), (0, 0)
+    H, W = bw.shape
+
+    def run_widths(seq, mod):
+        dark, light = [], []
         n = 1
-        cur = line[0]
-        for v in line[1:]:
+        cur = seq[0]
+        for v in seq[1:]:
             if v == cur:
                 n += 1
             else:
-                if cur:
-                    runs.append(n)
+                (dark if cur else light).append(n / mod)
                 cur, n = v, 1
-        if cur:
-            runs.append(n)
-    if not runs:
-        return (0, 0), (0, 0)
-    avg_dark = float(np.mean(runs))
-    growth_pct = (avg_dark - 2.0) / 2.0 * 100.0
-    growth_pct = max(-30.0, min(60.0, growth_pct))
-    growth_px = growth_pct / 100.0 * mod
-    return (growth_px, growth_pct), (growth_px, growth_pct)
+        (dark if cur else light).append(n / mod)
+        return dark, light
+
+    def growth(dark, light):
+        if not dark or not light:
+            return 0.0
+        d = float(np.mean(dark))
+        l = float(np.mean(light))
+        return (d - l) / (d + l) * 100.0
+
+    y_scan = max(0, min(H - 1, int(y0 + mod_y * 0.5)))
+    line = bw[y_scan, max(0, int(x0)):min(W, int(x1))]
+    if line.size >= 4:
+        g = growth(*run_widths(line, mod_x))
+    else:
+        g = 0.0
+
+    g = max(-30.0, min(60.0, g))
+    return (g / 100.0 * sym.module_px, g), (g / 100.0 * sym.module_px, g)
 
 
 def _pattern_damage(sym):
