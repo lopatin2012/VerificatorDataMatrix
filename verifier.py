@@ -142,13 +142,15 @@ def is_good(res):
 
 
 def plain_content(res):
-    """Copy-friendly content: no AI parens, no GS/FS/RS separators.
+    """Copy-friendly content: no AI parens, FS/RS separators stripped,
+    but GS (\x1d) preserved — it is the standard GS1 field separator
+    needed for correct parsing of variable-length AIs.
 
-    Prefers the raw bytes (content_raw) with control separators stripped;
+    Prefers the raw bytes (content_raw) with non-GS control chars stripped;
     falls back to the HRI text with parens removed.
     """
     if res.content_raw:
-        return res.content_raw.replace("\x1d", "").replace("\x1c", "").replace("\x1e", "")
+        return res.content_raw.replace("\x1c", "").replace("\x1e", "")
     if res.content:
         return res.content.replace("(", "").replace(")", "")
     return ""

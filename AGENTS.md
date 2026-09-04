@@ -12,7 +12,7 @@ and `--dir test_image_codes` refer to machine-local datasets not present here.
 
 ## Versioning
 
-`VERSION` lives in `version.py` (currently `1.0.14`), shown in the window title,
+`VERSION` lives in `version.py` (currently `1.0.17`), shown in the window title,
 CLI (`--version`) and PDF footer. Rules:
 
 - **Patch** (`1.0.x`): bump after every change to this `AGENTS.md` file.
@@ -79,10 +79,11 @@ When in doubt, follow semver order: patch < minor < major.
   locator for images zxing misses) and grid extraction via perspective warp.
   Handles inverted codes (white-on-dark) by trying both polarities.
 - `core/nn_locator.py` — optional neural-net locator (ResNet18 corner
-  regression, trained on `shortery/dm-codes`). Lazy torch import; last-resort
-  fallback in `decode.py` (crop + classic pipeline). Model weights in
-  `models/dm_corners.pth` (gitignored). Training code in `training/`
-  (gitignored; uses GPU; ML deps in `requirements-ml.txt`, NOT required).
+  regression, trained on `shortery/dm-codes`). Lazy `from . import nn_locator`
+  in `decode.py`; if torch is missing the ImportError is caught and the
+  locator is skipped silently. Last-resort fallback: NN crop → classic decode.
+  Model weights in `models/dm_corners.pth` (gitignored). Training code in
+  `training/` (gitignored; GPU; ML deps in `requirements-ml.txt`, NOT required).
 - Sample codes are all **20x20 or 22x22**, but `_candidate_sizes` now tries
   the auto-detected module count (and nearby even sizes) first, then 20x20/
   22x22 — verified by decoding the reconstructed grid (is_pure trusts the

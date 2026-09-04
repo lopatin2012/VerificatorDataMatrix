@@ -30,7 +30,6 @@ AI_TABLE = {
     "410": ("SHIPTO", "GLN пункта доставки", 13),
     "414": ("LOCNO", "GLN физического расположения", 13),
     "420": ("SHIPTO_POST", "Почтовый индекс доставки", None),
-    "91": ("KEY", "Ключ проверки", None),
 }
 
 
@@ -63,7 +62,6 @@ def parse(data):
     else:
         s = str(data)
 
-    s = s.replace("\x1d", "").replace("\x1c", "").replace("\x1e", "")
     # Strip HRI parens if present
     if "(" in s and ")" in s:
         out = []

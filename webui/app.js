@@ -10,6 +10,7 @@ const state = {
   channel: "color",
   focus: null,
   analyzed: 0,
+  showOverlay: true,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -108,6 +109,11 @@ function drawGauge(score, color, grade) {
   g.appendChild(needle);
 }
 
+function displayWithGS(text) {
+  if (!text) return "";
+  return text.replace(/\u001d/g, "[GS]");
+}
+
 function drawScene() {
   if (!state.img) return;
   const canvas = $("scene");
@@ -159,44 +165,46 @@ function drawScene() {
   };
 
   // symbol outlines + heatmap for every detected code
-  const sevColor = { critical: "#e53935", warning: "#fdd835", minor: "#fb8c00" };
-  (state.results || []).forEach((r, ri) => {
-    const isCur = ri === state.current;
-    if (r.corners) {
-      const c = r.corners;
-      ctx.beginPath();
-      const p0 = toCanvas(c[0], c[1]);
-      ctx.moveTo(p0[0], p0[1]);
-      for (let k = 2; k < c.length; k += 2) {
-        const p = toCanvas(c[k], c[k + 1]);
-        ctx.lineTo(p[0], p[1]);
+  if (state.showOverlay) {
+    const sevColor = { critical: "#e53935", warning: "#fdd835", minor: "#fb8c00" };
+    (state.results || []).forEach((r, ri) => {
+      const isCur = ri === state.current;
+      if (r.corners) {
+        const c = r.corners;
+        ctx.beginPath();
+        const p0 = toCanvas(c[0], c[1]);
+        ctx.moveTo(p0[0], p0[1]);
+        for (let k = 2; k < c.length; k += 2) {
+          const p = toCanvas(c[k], c[k + 1]);
+          ctx.lineTo(p[0], p[1]);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = isCur ? "#2e7d32" : "#90a4ae";
+        ctx.lineWidth = isCur ? 3 : 1.5;
+        ctx.stroke();
       }
-      ctx.closePath();
-      ctx.strokeStyle = isCur ? "#2e7d32" : "#90a4ae";
-      ctx.lineWidth = isCur ? 3 : 1.5;
-      ctx.stroke();
-    }
-    if (!isCur) return;
-    (r.regions || []).forEach((reg, i) => {
-      const pts = [];
-      for (let k = 0; k < reg.poly.length; k += 2) {
-        pts.push(toCanvas(reg.poly[k], reg.poly[k + 1]));
-      }
-      if (pts.length < 3) return;
-      const focus = state.focus === i;
-      ctx.beginPath();
-      ctx.moveTo(pts[0][0], pts[0][1]);
-      for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
-      ctx.closePath();
-      ctx.fillStyle = sevColor[reg.severity] || "#e53935";
-      ctx.globalAlpha = focus ? 0.75 : 0.35;
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = sevColor[reg.severity];
-      ctx.lineWidth = focus ? 4 : 2;
-      ctx.stroke();
+      if (!isCur) return;
+      (r.regions || []).forEach((reg, i) => {
+        const pts = [];
+        for (let k = 0; k < reg.poly.length; k += 2) {
+          pts.push(toCanvas(reg.poly[k], reg.poly[k + 1]));
+        }
+        if (pts.length < 3) return;
+        const focus = state.focus === i;
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+        ctx.closePath();
+        ctx.fillStyle = sevColor[reg.severity] || "#e53935";
+        ctx.globalAlpha = focus ? 0.75 : 0.35;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = sevColor[reg.severity];
+        ctx.lineWidth = focus ? 4 : 2;
+        ctx.stroke();
+      });
     });
-  });
+  }
 }
 
 // ------------------------------------------------------------- rendering
@@ -340,6 +348,13 @@ function recommend(name) {
 function renderData(data) {
   const wrap = $("chips");
   wrap.innerHTML = "";
+
+  var contentDisplay = $("contentdisplay");
+  if (contentDisplay) {
+    var plain = data.content_plain || (data.content || "").replace(/[()]/g, "");
+    contentDisplay.textContent = displayWithGS(plain) || "—";
+  }
+
   (data.elements || []).forEach(el => {
     const chip = document.createElement("div");
     chip.className = "chip";
@@ -463,6 +478,10 @@ function wireControls() {
   $("zoomout").addEventListener("click", () => { state.zoom = Math.max(0.5, state.zoom - 0.25); drawScene(); });
   $("rotate").addEventListener("click", () => { state.rotate++; drawScene(); });
   $("channel").addEventListener("change", (e) => { state.channel = e.target.value; drawScene(); });
+  var overlayToggle = $("overlaytoggle");
+  if (overlayToggle) {
+    overlayToggle.addEventListener("change", (e) => { state.showOverlay = e.target.checked; drawScene(); });
+  }
   $("copyall").addEventListener("click", (e) => {
     if (state.result && state.result.content) {
       const text = state.result.content_plain || state.result.content.replace(/[()]/g, "");

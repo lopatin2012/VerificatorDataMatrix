@@ -108,6 +108,7 @@ class VerifierApp:
         self.rotate = 0
         self.channel = "Цвет"
         self.focus_index = None
+        self.show_overlay = True
         self.history = []
         self.history_photos = []
 
@@ -206,8 +207,16 @@ class VerifierApp:
         cmb.pack(side=tk.LEFT, padx=4)
         cmb.bind("<<ComboboxSelected>>", lambda e: self._set_channel())
 
+        self.overlay_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctrl, text="Подсветка", variable=self.overlay_var,
+                        command=self._toggle_overlay).pack(side=tk.LEFT, padx=(8, 0))
+
     def _set_channel(self):
         self.channel = self.channel_var.get()
+        self._refresh_scene()
+
+    def _toggle_overlay(self):
+        self.show_overlay = self.overlay_var.get()
         self._refresh_scene()
 
     def _build_health(self, body):
@@ -285,6 +294,16 @@ class VerifierApp:
         self.code_selector.pack(anchor="w", pady=(2, 4))
         self.code_selector.bind("<<ComboboxSelected>>", lambda e: self._on_select_code())
         self.content_var = tk.StringVar(value="—")
+        self.content_raw_var = tk.StringVar(value="")
+        content_frame = ttk.Frame(data)
+        content_frame.pack(fill=tk.X, padx=4, pady=(4, 2))
+        tk.Label(content_frame, text="Содержимое:", font=("Segoe UI", 9, "bold"),
+                 fg="#455a64", bg="#eef1f5").pack(anchor="w")
+        self.content_lbl = tk.Label(content_frame, textvariable=self.content_var,
+                                    font=("Consolas", 10), wraplength=350,
+                                    justify=tk.LEFT, anchor="nw", bg="#f5f7fa",
+                                    relief="solid", bd=1, padx=6, pady=4)
+        self.content_lbl.pack(fill=tk.X)
         self.data_cards = []
         self.copy_all_btn = ttk.Button(data, text="Скопировать содержимое",
                                        command=self._copy_all)
@@ -579,7 +598,9 @@ class VerifierApp:
             w.destroy()
         if not res:
             return
-        self.content_var.set(plain_content(res))
+        raw = plain_content(res)
+        self.content_raw_var.set(raw)
+        self.content_var.set(raw.replace("\x1d", "[GS]") if raw else "—")
         self.copy_all_btn.configure(
             state=tk.NORMAL if res.content else tk.DISABLED,
             text="Скопировать содержимое" + (f" ({len(res.elements)} AI)"
@@ -641,7 +662,7 @@ class VerifierApp:
         self.root.clipboard_append(text)
 
     def _copy_all(self):
-        self._copy(self.content_var.get())
+        self._copy(self.content_raw_var.get())
 
     # ---------------------------------------------------------- history
 
@@ -765,27 +786,28 @@ class VerifierApp:
                 pts.append((px, py))
             return pts
 
-        for ri, r in enumerate(self.results):
-            if r.corner_points is None:
-                continue
-            pts = r.corner_points.astype(np.float32)
-            ring = map_poly(pts)
-            ring.append(ring[0])
-            if ri == self.result_index:
-                d.line(ring, fill=(46, 125, 50, 255), width=3)
-            else:
-                d.line(ring, fill=(144, 164, 174, 255), width=2)
+        if self.show_overlay:
+            for ri, r in enumerate(self.results):
+                if r.corner_points is None:
+                    continue
+                pts = r.corner_points.astype(np.float32)
+                ring = map_poly(pts)
+                ring.append(ring[0])
+                if ri == self.result_index:
+                    d.line(ring, fill=(46, 125, 50, 255), width=3)
+                else:
+                    d.line(ring, fill=(144, 164, 174, 255), width=2)
 
-        for i, reg in enumerate(self.regions):
-            poly = map_poly(reg["poly"])
-            color = SEV_COLORS[reg["severity"]]
-            rgb = tuple(int(color.lstrip("#")[k:k + 2], 16) for k in (0, 2, 4))
-            alpha = 150
-            if self.focus_index == i:
-                alpha = 230
-                d.line(poly + [poly[0]], fill=rgb + (255,), width=4)
-            d.polygon(poly, fill=rgb + (alpha,))
-            d.line(poly + [poly[0]], fill=rgb + (220,), width=2)
+            for i, reg in enumerate(self.regions):
+                poly = map_poly(reg["poly"])
+                color = SEV_COLORS[reg["severity"]]
+                rgb = tuple(int(color.lstrip("#")[k:k + 2], 16) for k in (0, 2, 4))
+                alpha = 150
+                if self.focus_index == i:
+                    alpha = 230
+                    d.line(poly + [poly[0]], fill=rgb + (255,), width=4)
+                d.polygon(poly, fill=rgb + (alpha,))
+                d.line(poly + [poly[0]], fill=rgb + (220,), width=2)
 
         img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
         return img
