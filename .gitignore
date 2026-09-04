@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Generated / runtime artifacts
+webui/_report.pdf
+*.log
+
+# Sample photos
+samples/
+
+# Training files and model weights
+training/
+models/

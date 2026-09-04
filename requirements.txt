@@ -1,0 +1,7 @@
+numpy
+opencv-python
+Pillow
+zxing-cpp
+reportlab
+flask
+waitress

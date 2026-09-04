@@ -1,0 +1,10 @@
+# Optional ML dependencies for the neural-net locator (training + inference).
+# Install with the CUDA wheel index for the 5070 Ti (Blackwell):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#   pip install datasets
+#
+# The core app does NOT require torch: if it is missing, the NN locator is
+# simply skipped.
+torch
+torchvision
+datasets

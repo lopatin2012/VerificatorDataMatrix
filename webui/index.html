@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DataMatrix Verifier</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">DM</div>
+      <div>
+        <h1>DataMatrix Verifier</h1>
+        <span id="version" class="muted"></span>
+      </div>
+    </div>
+    <div id="validation" class="validation muted">Ожидание изображения</div>
+  </header>
+
+  <main>
+    <section class="card scene">
+      <div class="card-head"><span class="bar"></span>Сцена</div>
+      <div id="dropzone" class="dropzone">
+        <input type="file" id="file" accept="image/*" hidden>
+        <canvas id="scene" width="800" height="600"></canvas>
+        <div id="dropmsg">
+          <div class="dropicon">⇪</div>
+          <p>Перетащите изображение или нажмите для выбора</p>
+          <button id="cambtn" class="btn" type="button">📷 Снять с камеры</button>
+          <video id="video" autoplay playsinline hidden></video>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="btn small" id="zoomout" type="button">−</button>
+        <button class="btn small" id="zoomin" type="button">+</button>
+        <button class="btn small" id="rotate" type="button">⟳ Повернуть</button>
+        <label class="select">Канал
+          <select id="channel">
+            <option value="color">Цвет</option>
+            <option value="gray">Серый</option>
+            <option value="ir">ИК</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section class="card health">
+      <div class="card-head"><span class="bar"></span>Качество и статус</div>
+      <div id="score" class="score">—</div>
+      <div id="grade" class="grade muted">—</div>
+      <svg id="gauge" viewBox="0 0 200 132" width="210"></svg>
+      <div id="verdict" class="verdict muted">—</div>
+      <div id="reason" class="reason muted">Загрузите изображение для проверки</div>
+      <hr>
+      <div class="minih">Ключевые параметры</div>
+      <div id="params"></div>
+    </section>
+
+    <section class="card diag">
+      <div class="card-head"><span class="bar"></span>Диагностика и данные</div>
+      <div class="tabs">
+        <button class="tab active" data-tab="defects">Дефекты</button>
+        <button class="tab" data-tab="data">Данные</button>
+        <button class="tab" data-tab="report">Отчёт</button>
+      </div>
+      <div id="defects" class="tabpanel"></div>
+      <div id="data" class="tabpanel hidden">
+        <button class="btn small" id="copyall" type="button">Скопировать содержимое</button>
+        <div id="chips" class="chips"></div>
+      </div>
+      <div id="report" class="tabpanel hidden">
+        <pre id="reporttext"></pre>
+        <button class="btn" id="pdfbtn" type="button">⬇ Сформировать PDF отчёт</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="history">Проанализировано: 0 кодов</span>
+    <span id="appver" class="muted"></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
