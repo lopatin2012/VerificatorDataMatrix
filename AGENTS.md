@@ -3,16 +3,23 @@
 ## Current state
 
 Python app for **GS1 DataMatrix verification** (ISO/IEC 15415-style grading,
-decode via zxing-cpp). It IS a git repo: single initial commit on `master`,
-remote `origin` = `https://github.com/lopatin2012/VerificatorDataMatrix.git`.
+decode via zxing-cpp). Git repo on `master`; remote `origin` =
+`https://github.com/lopatin2012/VerificatorDataMatrix.git`. History so far:
+initial app → favicon + decode-speedup + block-display fix → GS-separator
+copy + UI polish → Docker. The working tree often also carries uncommitted
+edits — run `git status` before assuming it is clean.
 
-`samples/`, `models/`, `training/`, `test_image_codes/` are gitignored and
-absent in this checkout — older "14/24 sample images" stats, `--dir samples`,
-and `--dir test_image_codes` refer to machine-local datasets not present here.
+Machine-local data, absent from git:
+- `samples/`, `training/`, `models/` — gitignored and not in this checkout;
+  older "14/24 sample images" stats and `--dir samples` refer to them.
+- `test_image_codes/` — real product-pack photos, present in this checkout but
+  UNTRACKED (not listed in `.gitignore`, so a bare `git add .` would stage
+  them; only `.dockerignore` excludes them). Handy for `--dir test_image_codes`
+  manual runs.
 
 ## Versioning
 
-`VERSION` lives in `version.py` (currently `1.0.17`), shown in the window title,
+`VERSION` lives in `version.py` (currently `1.0.18`), shown in the window title,
 CLI (`--version`) and PDF footer. Rules:
 
 - **Patch** (`1.0.x`): bump after every change to this `AGENTS.md` file.
@@ -43,6 +50,9 @@ When in doubt, follow semver order: patch < minor < major.
 & .venv\Scripts\python.exe main.py --dir samples
 # web service (Flask + waitress)
 & .venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8000
+# Docker (repo-root Dockerfile runs the web service on :8501)
+docker build -t dm-verifier .
+docker run --rm -p 8501:8501 dm-verifier
 ```
 
 `--um-per-px` sets the microns-per-pixel calibration (default 10.0).
@@ -59,11 +69,14 @@ When in doubt, follow semver order: patch < minor < major.
   heatmap drawn client-side, PDF download). REST: `/api/analyze` (returns
   `{image, results:[...]}` — one entry per code, each with its own
   `result_id`), `/api/pdf`, `/api/version`. Results live in an in-memory LRU
-  (50 entries), so `/api/pdf` 404s once a `result_id` ages out. Start via
-  `main.py --web`.
+  (50 entries), so `/api/pdf` 404s once a `result_id` ages out. Responses get
+  `Cache-Control: no-store` (added via `@app.after_request`) so browsers pick
+  up edited JS/CSS immediately. Start via `main.py --web`.
 - `report.py` — official PDF report (build_pdf), used by BOTH the web service
   and the GUI "Сформировать PDF отчёт" button (ui.py imports it too).
-- `visual.py` — annotated-image builder (heatmap overlay), shared by UI/web.
+- `visual.py` — legacy `overlay_image()` heatmap builder; it is tracked but no
+  longer imported anywhere — ui.py and the web UI draw their own overlays
+  client-side/inline.
 - `verifier.problem_regions(res)` maps failed parameters to image-space
   polygons used by the heatmap.
 - `core/decode.py` — `decode_all(img)` returns a DecodeResult per code found
@@ -93,11 +106,24 @@ When in doubt, follow semver order: patch < minor < major.
   Axicon reference (Размерность печати, Левая/Нижняя часть шаблона "L",
   Последовательность тактовых модулей, Запас коррекции ошибок, ...).
 - `gs1.py` — parses AIs from raw bytes (`\x1d` = GS separator) or HRI text.
+- Content copy preserves the GS separator `\x1d` (only FS `\x1c`/RS `\x1e` are
+  stripped): `verifier.plain_content()` → `content_raw`; the web REST
+  `content_plain` field carries the same raw form; both the GUI and web copy
+  buttons put the raw `\x1d` on the clipboard and only the on-screen preview
+  substitutes a visible `[GS]` marker. `\x1d` is the standard GS1 field
+  separator needed to re-parse variable-length AIs, so don't strip it in copy
+  paths.
 
 ## Gotchas
 
 - Don't pin new libraries without checking Python 3.13 wheels (reportlab is
   already installed for the PDF report).
+- The web server holds code in memory — waitress has NO auto-reload. After
+  editing `.py`/`webui/`, the running process keeps serving the OLD code until
+  restarted. A leftover server started earlier (even by another agent/session)
+  can sit unnoticed on port 8000 and report a stale `/api/version`; check
+  `Get-NetTCPConnection -LocalPort 8000` before debugging "changes don't
+  apply".
 - `cv2.imread` fails on paths with Cyrillic characters (Windows path encoding);
   the web service works fine because it decodes upload bytes via `imdecode`.
 - `G4_2.jpg` (white code on dark-blue background, perspective) is a known
