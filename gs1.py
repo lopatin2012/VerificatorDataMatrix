@@ -80,7 +80,13 @@ def parse(data):
 
     i = 0
     n = len(s)
+    seps = "\x1d\x1c\x1e"
     while i < n:
+        # Skip field separators (FNC1 / GS) that may precede the next AI.
+        while i < n and s[i] in seps:
+            i += 1
+        if i >= n:
+            break
         ai = None
         for length in (2, 3, 4):
             if i + length <= n and s[i:i + length] in AI_TABLE:
@@ -111,7 +117,45 @@ def parse(data):
                 if nxt is not None:
                     break
                 j += 1
-            value = s[i:j]
+            value = s[i:j].rstrip(seps)
             i = j
         elements.append(Element(ai, value))
     return elements
+
+
+def _mod10_check_digit(digits):
+    """GS1 mod-10 check digit over the payload digits (excluding the check)."""
+    total = 0
+    weight = 3
+    for ch in reversed(digits):
+        total += int(ch) * weight
+        weight = 1 if weight == 3 else 3
+    return (10 - total % 10) % 10
+
+
+def validate(elements):
+    """Return a list of human-readable warnings for parsed GS1 elements.
+
+    Checks unknown AIs, fixed-length fields, empty values and the GTIN/SSCC
+    mod-10 check digit. An empty list means no problems were found.
+    """
+    warnings = []
+    for el in elements:
+        info = AI_TABLE.get(el.ai)
+        if info is None:
+            warnings.append(f"Неизвестный AI {el.ai}")
+            continue
+        fixed = info[2]
+        if not el.value:
+            warnings.append(f"AI {el.ai}: пустое значение")
+        elif fixed is not None and len(el.value) != fixed:
+            warnings.append(
+                f"AI {el.ai}: ожидается {fixed} цифр, получено {len(el.value)}")
+    for el in elements:
+        if el.ai in ("01", "02") and len(el.value) == 14 and el.value.isdigit():
+            if int(el.value[-1]) != _mod10_check_digit(el.value[:13]):
+                warnings.append("AI 01: неверная контрольная цифра GTIN")
+        elif el.ai == "00" and len(el.value) == 18 and el.value.isdigit():
+            if int(el.value[-1]) != _mod10_check_digit(el.value[:17]):
+                warnings.append("AI 00: неверная контрольная цифра SSCC")
+    return warnings

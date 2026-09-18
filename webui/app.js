@@ -356,6 +356,17 @@ function renderData(data) {
     contentDisplay.textContent = displayWithGS(plain) || "—";
   }
 
+  const warn = $("gswarn");
+  if (warn) {
+    warn.innerHTML = "";
+    (data.gs1_warnings || []).forEach(w => {
+      const d = document.createElement("div");
+      d.className = "gswarnitem";
+      d.textContent = "⚠ " + w;
+      warn.appendChild(d);
+    });
+  }
+
   (data.elements || []).forEach(el => {
     const chip = document.createElement("div");
     chip.className = "chip";
@@ -568,6 +579,12 @@ function wireHistoryExports() {
   if (csv) csv.addEventListener("click", () => { window.location = "api/history.csv"; });
   const pdf = $("hpdfbtn");
   if (pdf) pdf.addEventListener("click", () => { window.location = "api/history.pdf"; });
+  const clear = $("clearhist");
+  if (clear) clear.addEventListener("click", async () => {
+    if (!confirm("Очистить историю проверок?")) return;
+    try { await fetch("api/history/clear", { method: "POST" }); } catch (e) { /* ignore */ }
+    loadHistory();
+  });
 }
 
 fetchVersion();

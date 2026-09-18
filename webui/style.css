@@ -160,6 +160,13 @@ hr { border: none; border-top: 1px solid var(--line); width: 100%; margin: 10px 
 .codesel-btn { background: #eceff1; color: var(--ink); }
 .codesel-btn.active { background: var(--accent); color: #fff; }
 
+.gswarn { margin-bottom: 8px; }
+.gswarnitem {
+  font-size: 12px; color: #b8860b; background: #fff8e1;
+  border-left: 3px solid #f9a825; border-radius: 4px;
+  padding: 4px 8px; margin-top: 4px;
+}
+
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .chip {
   border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;

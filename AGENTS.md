@@ -23,7 +23,7 @@ fallback (see `_dotted_results`); grading for them is coarse.
 
 ## Versioning
 
-`VERSION` lives in `version.py` (currently `1.0.20`), shown in the window title,
+`VERSION` lives in `version.py` (currently `1.0.21`), shown in the window title,
 CLI (`--version`) and PDF footer. Rules:
 
 - **Patch** (`1.0.x`): bump after every change to this `AGENTS.md` file.
@@ -42,7 +42,9 @@ When in doubt, follow semver order: patch < minor < major.
   (`C:\Users\admin\AppData\Local\Programs\Python\Python313\python.exe`, or
   `py -3.13`). Use that interpreter to exercise the NN locator.
 - Bare `python` on PATH is Python 3.14 **without pip** — do not use it.
-- No test suite exists. Verify changes with `main.py --file` on a real image.
+- Tests: `main.py --selftest` (self-contained smoke tests — GS1 validation and
+  synthetic solid/dotted/inverted decode). CI runs the same command
+  (`.github/workflows/ci.yml`). Still verify decode changes on real images.
 - Use `-X utf8` when piping Cyrillic output to files (console may mojibake).
 
 ## Commands
@@ -55,6 +57,8 @@ When in doubt, follow semver order: patch < minor < major.
 & .venv\Scripts\python.exe main.py --dir samples
 # web service (Flask + waitress)
 & .venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8000
+# built-in smoke tests (no sample files needed)
+& .venv\Scripts\python.exe main.py --selftest
 # Docker (repo-root Dockerfile runs the web service on :8501)
 docker build -t dm-verifier .
 docker run --rm -p 8501:8501 dm-verifier
@@ -81,20 +85,19 @@ docker run --rm -p 8501:8501 dm-verifier
 - `webapp.py` + `webui/` — Flask/waitress web service (upload, camera,
   heatmap drawn client-side, PDF download, history strip with CSV/PDF export).
   REST: `/api/analyze` (returns `{image, results:[...]}` — one entry per code,
-  each with its own `result_id`), `/api/history`, `/api/result/<id>` (reload a
-  past check), `/api/history.csv`, `/api/history.pdf`, `/api/pdf`,
-  `/api/version`. Each stored entry keeps `{res, img, payload, thumb, ts}`.
-  Results live in an in-memory LRU (50 entries), so a `result_id` (and its
-  history entry) 404s once it ages out; history is lost on restart. Responses
+  each with its own `result_id`), `/api/history`, `/api/history/clear` (POST),
+  `/api/result/<id>` (reload a past check), `/api/history.csv`,
+  `/api/history.pdf`, `/api/pdf`, `/api/version`. Each stored entry keeps
+  `{res, img, payload, thumb, ts}`. Results live in an in-memory LRU (50
+  entries), so a `result_id` (and its history entry) 404s once it ages out;
+  history is lost on restart. Generated PDFs go to a temp dir
+  (`PDF_DIR`), never under `webui/` (which is served statically). Responses
   get `Cache-Control: no-store` (added via `@app.after_request`) so browsers
   pick up edited JS/CSS immediately. Start via `main.py --web`.
-- `report.py` also has `build_history_pdf(entries, path)` for the history
-  export (`build_pdf` stays the per-code report).
-- `report.py` — official PDF report (build_pdf), used by BOTH the web service
-  and the GUI "Сформировать PDF отчёт" button (ui.py imports it too).
-- `visual.py` — legacy `overlay_image()` heatmap builder; it is tracked but no
-  longer imported anywhere — ui.py and the web UI draw their own overlays
-  client-side/inline.
+- `report.py` — official PDF report (`build_pdf`), used by BOTH the web service
+  and the GUI "Сформировать PDF отчёт" button (ui.py imports it too); also
+  `build_history_pdf(entries, path)` for the history export. `visual.py` was
+  removed — UI and web draw their own overlays.
 - `verifier.problem_regions(res)` maps failed parameters to image-space
   polygons used by the heatmap.
 - `core/decode.py` — `decode_all(img)` returns a DecodeResult per code found
@@ -104,8 +107,9 @@ docker run --rm -p 8501:8501 dm-verifier
   on this system and breaks zxing). Direct pass tries raw color, then
   thresholded binarizations (some low-contrast codes only decode there).
   Fallback: rebuild module grid + `is_pure`. Undecoded but located symbols are
-  kept (for grading) only if their L+timing pattern score is strong — the
-  run-based locator can emit whole-frame false positives on dark backgrounds.
+  kept (for grading) only if their L+timing pattern score is strong, their grid
+  is >= 8 modules per side and the quad passes the min-side/aspect checks — the
+  run-based locator can emit whole-frame / tiny (4x4) false positives.
 - Dotted / white-on-dark codes: `_dotted_results` (runs only when nothing
   decoded) closes the dot mask with a small elliptical kernel, lets zxing find
   the symbol, then rebuilds the grid from the zxing quad by warping
@@ -129,7 +133,10 @@ docker run --rm -p 8501:8501 dm-verifier
   reference output ("48% contrast → grade 4"). Parameter names follow the
   Axicon reference (Размерность печати, Левая/Нижняя часть шаблона "L",
   Последовательность тактовых модулей, Запас коррекции ошибок, ...).
-- `gs1.py` — parses AIs from raw bytes (`\x1d` = GS separator) or HRI text.
+- `gs1.py` — parses AIs from raw bytes (`\x1d` = GS separator, skipped between
+  fields) or HRI text. `gs1.validate(elements)` returns warnings (unknown AI,
+  fixed-length mismatch, GTIN/SSCC mod-10 check digit), surfaced as
+  `Result.gs1_warnings` and `to_dict()["gs1_warnings"]`.
 - Content copy preserves the GS separator `\x1d` (only FS `\x1c`/RS `\x1e` are
   stripped): `verifier.plain_content()` → `content_raw`; the web REST
   `content_plain` field carries the same raw form; both the GUI and web copy

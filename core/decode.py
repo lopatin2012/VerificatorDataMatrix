@@ -203,6 +203,10 @@ def _decode_impl(img, _depth):
         # symbol must be a plausible DataMatrix quad (not a whole-frame or
         # sub-pixel sliver) with a strong fixed pattern (L + timing).
         if not dec.ok:
+            # No valid ECC200 symbol is smaller than 8 modules on a side, so
+            # reject tiny pattern fits (the run-based locator emits 4x4 ones).
+            if min(sym.rows, sym.cols) < 8:
+                continue
             c = np.asarray(sym.corners, dtype=np.float32).reshape(4, 2)
             w = c[:, 0].max() - c[:, 0].min()
             h = c[:, 1].max() - c[:, 1].min()

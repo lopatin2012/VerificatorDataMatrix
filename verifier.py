@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 from core import decode, detect, grade
-from gs1 import parse
+from gs1 import parse, validate
 
 # Standard reference apertures in microns (ISO 15415 selection).
 STANDARD_APERTURES = [160, 200, 250, 318, 400, 500, 630]
@@ -25,6 +25,7 @@ class Result:
         self.aperture_um = None
         self.params = []
         self.elements = []
+        self.gs1_warnings = []
         self.overall_class = None
         self.validation = "FAIL"
         self.symbol = None
@@ -82,6 +83,7 @@ def _analyze_one(img, dec, um_per_px):
         res.content = dec.text
         res.content_raw = dec.bytes.decode("latin-1") if dec.bytes else None
         res.elements = parse(dec.bytes if dec.bytes else dec.text)
+        res.gs1_warnings = validate(res.elements)
 
     params = grade.grade_symbol(sym, decoded=dec.ok)
     res.params = params
@@ -187,6 +189,7 @@ def to_dict(res):
              "description": el.description}
             for el in res.elements
         ],
+        "gs1_warnings": res.gs1_warnings,
         "regions": [
             {"label": r["label"], "severity": r["severity"],
              "poly": r["poly"].ravel().tolist()}

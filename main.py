@@ -35,6 +35,8 @@ def print_report(res, path):
     print("-" * 60)
     for el in res.elements:
         print(f"  {el.display_name():<8} = {el.value}")
+    for w in getattr(res, "gs1_warnings", []):
+        print("  [WARN]", w)
 
 
 def main():
@@ -45,11 +47,17 @@ def main():
     ap.add_argument("--dir", help="analyze all images in a directory")
     ap.add_argument("--gui", action="store_true", help="launch the GUI")
     ap.add_argument("--web", action="store_true", help="launch the web service")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run built-in smoke tests and exit")
     ap.add_argument("--host", default="127.0.0.1", help="web service host")
     ap.add_argument("--port", type=int, default=8000, help="web service port")
     ap.add_argument("--um-per-px", type=float, default=10.0,
                     help="calibration, microns per pixel")
     args = ap.parse_args()
+
+    if args.selftest:
+        import selftest
+        return selftest.run()
 
     if args.web:
         import webapp

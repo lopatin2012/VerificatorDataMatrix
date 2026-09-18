@@ -8,6 +8,7 @@ import csv
 import datetime
 import io
 import os
+import tempfile
 import threading
 import time
 import uuid
@@ -23,6 +24,8 @@ from version import VERSION
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEBUI_DIR = os.path.join(BASE_DIR, "webui")
+# Reports are built here, not under webui/, so they are never served publicly.
+PDF_DIR = tempfile.mkdtemp(prefix="dm_verify_")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
@@ -172,6 +175,14 @@ def api_history():
     return jsonify({"items": items})
 
 
+@app.post("/api/history/clear")
+def api_history_clear():
+    with ANALYZE_LOCK:
+        RESULTS.clear()
+        RESULTS_ORDER.clear()
+    return jsonify({"ok": True})
+
+
 @app.get("/api/result/<rid>")
 def api_result(rid):
     with ANALYZE_LOCK:
@@ -219,7 +230,7 @@ def api_history_pdf():
     rows = _export_rows()
     if not rows:
         return jsonify({"error": "История пуста"}), 404
-    pdf_path = os.path.join(BASE_DIR, "webui", "_history.pdf")
+    pdf_path = os.path.join(PDF_DIR, f"history_{int(time.time() * 1000)}.pdf")
     try:
         build_history_pdf(rows, pdf_path)
     except Exception as exc:
@@ -238,7 +249,7 @@ def api_pdf():
     if entry is None:
         return jsonify({"error": "Результат не найден (истёк)"}), 404
     res, img = entry["res"], entry["img"]
-    pdf_path = os.path.join(BASE_DIR, "webui", "_report.pdf")
+    pdf_path = os.path.join(PDF_DIR, f"report_{rid}.pdf")
     try:
         build_pdf(res, img, pdf_path)
     except Exception as exc:
