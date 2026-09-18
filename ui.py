@@ -7,11 +7,33 @@ from tkinter import ttk, filedialog
 
 import cv2
 import numpy as np
-from PIL import Image, ImageTk, ImageDraw, ImageOps
+from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps
 
-from verifier import (Result, analyze_all, is_good, plain_content,
-                      problem_regions, score_of)
+from verifier import (Result, analyze_all, imread_unicode, is_good,
+                      plain_content, problem_regions, score_of)
 from version import VERSION
+
+
+def _ui_font(size):
+    """A Cyrillic-capable TrueType font for on-image labels (cached)."""
+    cache = _ui_font.__dict__.setdefault("_cache", {})
+    if size in cache:
+        return cache[size]
+    font = None
+    for path in ("C:/Windows/Fonts/segoeuib.ttf",
+                 "C:/Windows/Fonts/arialbd.ttf",
+                 "C:/Windows/Fonts/segoeui.ttf",
+                 "C:/Windows/Fonts/arial.ttf",
+                 "C:/Windows/Fonts/DejaVuSans-Bold.ttf"):
+        try:
+            font = ImageFont.truetype(path, size)
+            break
+        except OSError:
+            continue
+    if font is None:
+        font = ImageFont.load_default()
+    cache[size] = font
+    return font
 
 SEV_COLORS = {
     "critical": "#e53935",
@@ -341,7 +363,7 @@ class VerifierApp:
         path = filedialog.askopenfilename(
             filetypes=[("Images", "*.jpg *.jpeg *.png *.bmp *.tif *.tiff")])
         if path:
-            bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+            bgr = imread_unicode(path, cv2.IMREAD_COLOR)
             if bgr is None:
                 self._set_verdict("Ошибка чтения файла", "#c62828", "Не удалось открыть файл")
                 return
@@ -808,6 +830,23 @@ class VerifierApp:
                     d.line(poly + [poly[0]], fill=rgb + (255,), width=4)
                 d.polygon(poly, fill=rgb + (alpha,))
                 d.line(poly + [poly[0]], fill=rgb + (220,), width=2)
+
+        # When nothing was decoded, make it obvious on the image itself.
+        res = self.result
+        if res is None or getattr(res, "symbol", None) is None:
+            label = "Код не найден"
+            font = _ui_font(max(16, int(min(img.size) * 0.06)))
+            try:
+                bbox = d.textbbox((0, 0), label, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            except Exception:
+                tw, th = 8 * len(label), 16
+            cx, cy = img.size[0] // 2, img.size[1] // 2
+            d.rectangle([cx - tw / 2 - 16, cy - th / 2 - 10,
+                         cx + tw / 2 + 16, cy + th / 2 + 10],
+                        fill=(0, 0, 0, 165))
+            d.text((cx - tw / 2, cy - th / 2), label, font=font,
+                   fill=(255, 90, 90, 255))
 
         img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
         return img

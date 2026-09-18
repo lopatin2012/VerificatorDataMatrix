@@ -205,6 +205,21 @@ function drawScene() {
       });
     });
   }
+
+  // Nothing decoded -> say it right on the image so it is not missed.
+  const hasCode = (state.results || []).some((r) => r.corners);
+  if (!hasCode) {
+    const text = "Код не найден";
+    const fs = Math.max(18, Math.round(ch * 0.06));
+    ctx.font = "bold " + fs + "px 'Segoe UI', Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(cw / 2 - tw / 2 - 18, ch / 2 - fs / 2 - 12, tw + 36, fs + 24);
+    ctx.fillStyle = "#ff5252";
+    ctx.fillText(text, cw / 2, ch / 2);
+  }
 }
 
 // ------------------------------------------------------------- rendering
@@ -467,8 +482,8 @@ async function analyze(file) {
   try {
     const resp = await fetch("api/analyze", { method: "POST", body: fd });
     const data = await resp.json();
-    if (data.error) {
-      $("validation").textContent = data.error;
+    if (!data.image) {
+      $("validation").textContent = data.error || "Ошибка анализа";
       $("validation").style.color = "#c62828";
       return;
     }

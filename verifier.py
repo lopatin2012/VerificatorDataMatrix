@@ -9,6 +9,22 @@ from gs1 import parse, validate
 STANDARD_APERTURES = [160, 200, 250, 318, 400, 500, 630]
 
 
+def imread_unicode(path, flags=cv2.IMREAD_COLOR):
+    """Read an image, tolerating non-ASCII (e.g. Cyrillic) paths.
+
+    `cv2.imread` fails on such paths on Windows because of its narrow path
+    handling; reading the bytes and decoding through `imdecode` avoids that.
+    Returns None if the file cannot be read.
+    """
+    try:
+        data = np.fromfile(path, dtype=np.uint8)
+    except OSError:
+        return None
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, flags)
+
+
 class Result:
     def __init__(self):
         self.ok = False

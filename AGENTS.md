@@ -83,9 +83,12 @@ docker run --rm -p 8501:8501 dm-verifier
   `analyze(img)` returns the first one (or an error Result). Both the GUI and
   web render all results and let the user switch between codes.
 - `ui.py` — Tkinter dashboard (scene with zoom/rotate/channel + heatmap,
-  gauge, defect cards, GS1 chips, PDF, history strip).
+  gauge, defect cards, GS1 chips, PDF, history strip). Draws a "Код не найден"
+  banner on the scene when the current result has no symbol.
 - `webapp.py` + `webui/` — Flask/waitress web service (upload, camera,
   heatmap drawn client-side, PDF download, history strip with CSV/PDF export).
+  When nothing is found `/api/analyze` still returns the `image` (plus
+  `error`), and the client canvas draws a "Код не найден" banner on it.
   REST: `/api/analyze` (returns `{image, results:[...]}` — one entry per code,
   each with its own `result_id`), `/api/history`, `/api/history/clear` (POST),
   `/api/result/<id>` (reload a past check), `/api/history.csv`,
@@ -174,8 +177,9 @@ docker run --rm -p 8501:8501 dm-verifier
   can sit unnoticed on port 8000 and report a stale `/api/version`; check
   `Get-NetTCPConnection -LocalPort 8000` before debugging "changes don't
   apply".
-- `cv2.imread` fails on paths with Cyrillic characters (Windows path encoding);
-  the web service works fine because it decodes upload bytes via `imdecode`.
+- `cv2.imread` fails on paths with Cyrillic characters (Windows path encoding).
+  The web service is fine (it decodes upload bytes via `imdecode`); the CLI and
+  GUI use `verifier.imread_unicode` (`np.fromfile` + `cv2.imdecode`) instead.
 - Dotted / white-on-dark codes decode only through `_dotted_results`, which is
   slower (~1 s/code, several s more when `_dotted_tiles` runs) and runs after
   the normal pipeline fails. Grading for them is coarse (reflectance is

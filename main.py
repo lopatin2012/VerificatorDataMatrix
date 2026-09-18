@@ -12,7 +12,7 @@ import sys
 
 import cv2
 
-from verifier import analyze
+from verifier import analyze, imread_unicode
 from version import VERSION
 
 
@@ -78,7 +78,7 @@ def main():
             (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"))]
 
     for path in paths:
-        img = cv2.imread(path, cv2.IMREAD_COLOR)
+        img = imread_unicode(path, cv2.IMREAD_COLOR)
         if img is None:
             print("Не удалось прочитать:", path)
             continue

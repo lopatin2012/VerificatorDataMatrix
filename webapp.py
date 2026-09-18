@@ -143,7 +143,8 @@ def api_analyze():
         return jsonify({"error": f"Ошибка анализа: {exc}"}), 500
 
     if not results:
-        return jsonify({"error": "Код не найден"}), 200
+        return jsonify({"error": "Код не найден",
+                        "image": _image_data_url(img)}), 200
 
     payload = {"image": "", "results": []}
     for res in results:
