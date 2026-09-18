@@ -59,6 +59,35 @@ def _barcode_quad(b):
     return detect._order_quad(pts)
 
 
+def _barcode_size(b):
+    """Exact module count from zxing's own rendering of the decoded symbol.
+
+    `Barcode.to_image(scale=1)` draws the symbol at 1 px/module on a light
+    quiet zone, so the bounding box of its dark modules is the module grid.
+    Used as a size hint so the rebuilt grid has the correct geometry (a wrong
+    module count can still decode, e.g. a 20x4 grid for a 22x22 symbol).
+    """
+    try:
+        a = np.asarray(b.to_image(scale=1))
+    except Exception:
+        return None
+    dark = a < 128
+    if not dark.any():
+        return None
+    ys, xs = np.where(dark)
+    rows = int(ys.max() - ys.min() + 1)
+    cols = int(xs.max() - xs.min() + 1)
+    if not (8 <= rows <= 150 and 8 <= cols <= 150):
+        return None
+    return (rows, cols)
+
+
+def _scaled_quad(quad, f):
+    q = np.asarray(quad, dtype=np.float32).reshape(4, 2)
+    c = q.mean(axis=0)
+    return (q - c) * f + c
+
+
 def _candidate_sizes(base):
     """Even symbol sizes to try, near the auto-detected module count plus the
     common 20x20 / 22x22. Sorted by distance from the base size so the most
@@ -84,36 +113,73 @@ def _candidate_sizes(base):
     return sorted(sizes, key=key)
 
 
-def _symbol_for_quad(gray, quad, expected):
+def _grid_decodes(sym, expected):
+    """is_pure decode of a rebuilt grid; returns (text, bytes) on a match."""
+    grid_img = detect.grid_to_image(sym)
+    r = zxingcpp.read_barcodes(
+        Image.fromarray(grid_img), formats=zxingcpp.BarcodeFormat.DataMatrix,
+        is_pure=True)
+    if r and r[0].valid and r[0].text:
+        text = r[0].text
+        if expected is None or text == expected or text.startswith(expected[:10]):
+            return text, bytes(r[0].bytes)
+    return None, None
+
+
+def _symbol_for_quad(gray, quad, expected, size_hint=None):
     """Reconstruct the module grid for a candidate quad.
 
     Tries is_pure decoding over candidate sizes (decode success confirms the
     module count). Falls back to the best fixed-pattern fit for heavily
     damaged symbols. Returns (sym, text, bytes, via_grid).
     """
-    base = detect.extract_grid(gray, quad)
-    base_size = (base.rows, base.cols) if (base is not None
-                                           and base.rows >= 8 and base.cols >= 8) else None
-    fallback = base
-    fallback_sc = _pattern_score(base) if base is not None else -1.0
-    for size in _candidate_sizes(base):
-        if base_size is not None and size == base_size:
-            sym = base
-        else:
-            sym = detect.extract_grid(gray, quad, known_size=size)
+    fallback = None
+    fallback_sc = -1.0
+
+    def consider(sym):
+        nonlocal fallback, fallback_sc
         if sym is None:
-            continue
+            return None
         sc = _pattern_score(sym)
         if sc > fallback_sc:
             fallback, fallback_sc = sym, sc
-        grid_img = detect.grid_to_image(sym)
-        r = zxingcpp.read_barcodes(
-            Image.fromarray(grid_img), formats=zxingcpp.BarcodeFormat.DataMatrix,
-            is_pure=True)
-        if r and r[0].valid and r[0].text:
-            text = r[0].text
-            if expected is None or text == expected or text.startswith(expected[:10]):
-                return sym, text, bytes(r[0].bytes), True
+        text, byt = _grid_decodes(sym, expected)
+        if text is not None:
+            return sym, text, byt, True
+        return None
+
+    # A successful zxing decode knows the exact module count; use it so the
+    # rebuilt grid has the right geometry. A small expansion also absorbs the
+    # half-module offset between zxing's quad and the module lattice.
+    if size_hint is not None:
+        best = None
+        best_sc = -1.0
+        for f in (1.0, 1.05, 1.03, 1.08, 0.97, 1.1):
+            q = quad if f == 1.0 else _scaled_quad(quad, f)
+            sym = detect.extract_grid(gray, q, known_size=size_hint)
+            if sym is None:
+                continue
+            sc = _pattern_score(sym)
+            if sc > best_sc:
+                best, best_sc = sym, sc
+            text, byt = _grid_decodes(sym, expected)
+            if text is not None:
+                return sym, text, byt, True
+        if best is not None:
+            # zxing decoded this symbol, so its module count is authoritative
+            # even when our resampled grid does not decode (e.g. glare).
+            return best, None, None, False
+
+    base = detect.extract_grid(gray, quad)
+    base_size = (base.rows, base.cols) if (base is not None
+                                           and base.rows >= 8 and base.cols >= 8) else None
+    for size in _candidate_sizes(base):
+        if base_size is not None and size == base_size:
+            got = consider(base)
+        else:
+            got = consider(detect.extract_grid(gray, quad, known_size=size))
+        if got:
+            return got
     return fallback, None, None, False
 
 
@@ -138,14 +204,14 @@ def _decode_impl(img, _depth):
     gray, rgb = _prep(img)
     im = Image.fromarray(rgb)
 
-    candidates = []  # (quad, text, bytes, position)
+    candidates = []  # (quad, text, bytes, position, size)
 
-    def add_candidate(quad, text=None, byt=None, position=None):
+    def add_candidate(quad, text=None, byt=None, position=None, size=None):
         quad = detect._order_quad(np.asarray(quad, dtype=np.float32).reshape(4, 2))
         for q, *_ in candidates:
             if _quads_close(q, quad):
                 return
-        candidates.append((quad, text, byt, position))
+        candidates.append((quad, text, byt, position, size))
 
     # Direct decodes on raw color (all of them, not just the first).
     found = zxingcpp.read_barcodes(
@@ -155,7 +221,8 @@ def _decode_impl(img, _depth):
         quad = _barcode_quad(b)
         add_candidate(quad, b.text, bytes(b.bytes),
                       [(p.x, p.y) for p in (b.position.top_left, b.position.top_right,
-                                            b.position.bottom_right, b.position.bottom_left)])
+                                            b.position.bottom_right, b.position.bottom_left)],
+                      _barcode_size(b))
 
     # Some low-contrast symbols only appear after aggressive thresholding.
     for th in (96, 128, 160, 192):
@@ -167,7 +234,8 @@ def _decode_impl(img, _depth):
             quad = _barcode_quad(b)
             add_candidate(quad, b.text, bytes(b.bytes),
                           [(p.x, p.y) for p in (b.position.top_left, b.position.top_right,
-                                                b.position.bottom_right, b.position.bottom_left)])
+                                                b.position.bottom_right, b.position.bottom_left)],
+                          _barcode_size(b))
 
     # Position-only candidates (include undecoded results) + run-based L locator.
     for q in detect.locate_candidates(gray):
@@ -177,11 +245,12 @@ def _decode_impl(img, _depth):
 
     results = []
     frame_w, frame_h = gray.shape[1], gray.shape[0]
-    for quad, text, byt, position in candidates:
+    for quad, text, byt, position, size in candidates:
         # Skip obviously-bogus position-only quads before the size search.
         if text is None and not _plausible_quad(quad, frame_w, frame_h):
             continue
-        sym, gtext, gbytes, via_grid = _symbol_for_quad(gray, quad, expected=text)
+        sym, gtext, gbytes, via_grid = _symbol_for_quad(
+            gray, quad, expected=text, size_hint=size)
         if sym is None:
             continue
         dec = DecodeResult()
