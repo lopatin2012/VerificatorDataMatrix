@@ -290,11 +290,16 @@ def _decode_impl(img, _depth):
         results.append(dec)
 
     # Dotted / low-contrast codes (e.g. white-on-dark): morphological closing
-    # joins the dots so zxing can find the symbol.
+    # joins the dots so zxing can find the symbol. If the full frame sees no
+    # symbol at all, the code is likely small, so retry on local tiles.
     if not any(r.ok for r in results):
-        dotted = _dotted_results(gray)
+        dotted, detected = _dotted_results(gray)
         if dotted:
             results = dotted
+        elif not detected:
+            tiled = _dotted_tiles(gray)
+            if tiled:
+                results = tiled
 
     # Last resort: neural-net locator (crop + classic decode).
     if not results and _depth == 0:
@@ -382,54 +387,27 @@ def _pure_grid_text(grid, pad=3, scale=12):
     return None
 
 
-def _symbol_from_dotted(gray, closed, quad, expected):
-    """Rebuild a Symbol for a dotted code from its zxing quad.
-
-    `closed` is a binary image with printed modules white (255). zxing orders
-    the quad corners in symbol coordinates, so the module lattice maps
-    directly to canonical grid coordinates.
-    """
+def _dotted_warp(closed, quad):
     S = _DOT_WARP
     dst = np.array([[0, 0], [S, 0], [S, S], [0, S]], dtype=np.float32)
     M = cv2.getPerspectiveTransform(np.asarray(quad, dtype=np.float32), dst)
-    wmask = cv2.warpPerspective(255 - closed, M, (S, S),
-                                flags=cv2.INTER_LINEAR)
+    return cv2.warpPerspective(255 - closed, M, (S, S),
+                               flags=cv2.INTER_LINEAR)
+
+
+def _dotted_grid(wmask, n):
+    cell = cv2.resize(wmask, (n, n), interpolation=cv2.INTER_AREA)
+    _, bw = cv2.threshold(cell, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return bw < 128
+
+
+def _dotted_symbol(gray, closed, quad, n):
+    """Build a Symbol for a dotted symbol's quad at module count `n`."""
+    S = _DOT_WARP
+    dst = np.array([[0, 0], [S, 0], [S, S], [0, S]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(np.asarray(quad, dtype=np.float32), dst)
     wgray = cv2.warpPerspective(gray, M, (S, S), flags=cv2.INTER_LINEAR)
-
-    def grid_at(n):
-        cell = cv2.resize(wmask, (n, n), interpolation=cv2.INTER_AREA)
-        _, bw = cv2.threshold(cell, 0, 255,
-                              cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return bw < 128
-
-    # Sizes whose rebuilt grid decodes to the text zxing already recovered.
-    pure = {}
-    for n in _DOT_MODULE_SIZES:
-        g = grid_at(n)
-        if _pure_grid_text(g) == expected:
-            pure[n] = _pattern_score_grid(g)
-
-    # The dot pitch is the symbol's own lattice, so trust it over a pure
-    # decode: a wrong module count can still decode (e.g. 32 for a 20x20
-    # symbol), giving bogus geometry. No consistent pitch -> false positive.
-    n = None
-    pe = _dot_pitch(wmask)
-    if pe is not None:
-        pitch, _prom = pe
-        n0 = max(_DOT_MODULE_SIZES[0],
-                 min(_DOT_MODULE_SIZES[-1], int(round(pitch / 2.0) * 2)))
-        if n0 in pure:
-            n = n0
-        else:
-            near = [k for k in pure if abs(k - n0) <= 2]
-            if near:
-                n = min(near, key=lambda k: abs(k - n0))
-            elif _pattern_score_grid(grid_at(n0)) >= _DOT_REBUILD_MIN_SCORE:
-                n = n0
-    if n is None:
-        return None
-
-    grid = grid_at(n)
+    grid = _dotted_grid(_dotted_warp(closed, quad), n)
     ref = cv2.resize(wgray, (n, n),
                      interpolation=cv2.INTER_AREA).astype(np.float64)
     # grade.py expects dark modules to have low reflectance.
@@ -449,19 +427,79 @@ def _symbol_from_dotted(gray, closed, quad, expected):
     return sym
 
 
-def _dotted_results(gray):
-    """Fallback for dotted / low-contrast codes (e.g. white-on-dark).
+def _symbol_from_dotted(gray, closed, quad, expected):
+    """Rebuild a Symbol for a dotted code from its zxing quad.
 
-    Dot-style symbols defeat zxing's detector. Morphological closing joins
-    the dots of adjacent dark modules without filling light modules, making
-    the symbol readable. Runs only when the normal pipeline decoded nothing.
+    `closed` is a binary image with printed modules white (255). zxing orders
+    the quad corners in symbol coordinates, so the module lattice maps
+    directly to canonical grid coordinates.
     """
-    base = _white_mask(gray)
+    wmask = _dotted_warp(closed, quad)
+
+    # Sizes whose rebuilt grid decodes to the text zxing already recovered.
+    pure = {}
+    for n in _DOT_MODULE_SIZES:
+        g = _dotted_grid(wmask, n)
+        if _pure_grid_text(g) == expected:
+            pure[n] = _pattern_score_grid(g)
+
+    # The dot pitch is the symbol's own lattice, so trust it over a pure
+    # decode: a wrong module count can still decode (e.g. 32 for a 20x20
+    # symbol), giving bogus geometry. No consistent pitch -> false positive.
+    n = None
+    pe = _dot_pitch(wmask)
+    if pe is not None:
+        pitch, _prom = pe
+        n0 = max(_DOT_MODULE_SIZES[0],
+                 min(_DOT_MODULE_SIZES[-1], int(round(pitch / 2.0) * 2)))
+        if n0 in pure:
+            n = n0
+        else:
+            near = [k for k in pure if abs(k - n0) <= 2]
+            if near:
+                n = min(near, key=lambda k: abs(k - n0))
+            elif _pattern_score_grid(_dotted_grid(wmask, n0)) >= _DOT_REBUILD_MIN_SCORE:
+                n = n0
+    if n is None:
+        return None
+    return _dotted_symbol(gray, closed, quad, n)
+
+
+def _symbol_from_dotted_tile(gray, closed, quad, expected):
+    """Relaxed rebuild for a small, very low-grade dotted code found on a local
+    crop. The full-frame dotted pass detected nothing at all, so the text zxing
+    recovered is trusted and given the best-fitting module count (these codes
+    are too degraded for the pitch to be measurable)."""
+    sym = _symbol_from_dotted(gray, closed, quad, expected)
+    if sym is not None:
+        return sym
+    wmask = _dotted_warp(closed, quad)
+    best, best_sc = None, -1.0
+    for n in _DOT_MODULE_SIZES:
+        sc = _pattern_score_grid(_dotted_grid(wmask, n))
+        if sc > best_sc:
+            best, best_sc = n, sc
+    if best is None:
+        return None
+    return _dotted_symbol(gray, closed, quad, best)
+
+
+def _dotted_scan(gray, region, offset=(0, 0), relaxed=False,
+                 kernels=_DOT_CLOSE_KS, scales=(1, 2)):
+    """Closing + zxing over `region` (a crop of `gray` at `offset`).
+
+    Returns (results, detected); `detected` is True if zxing found any symbol,
+    even one whose grid could not be rebuilt (used to avoid tile fallbacks on
+    screen/moire photos that the full-frame pass already sees).
+    """
+    ox, oy = offset
+    base = _white_mask(region)
+    detected = False
     for polarity in (base, 255 - base):
-        for k in _DOT_CLOSE_KS:
+        for k in kernels:
             ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
             closed = cv2.morphologyEx(polarity, cv2.MORPH_CLOSE, ker)
-            for scale in (1, 2):
+            for scale in scales:
                 img = closed if scale == 1 else cv2.resize(
                     closed, None, fx=scale, fy=scale,
                     interpolation=cv2.INTER_CUBIC)
@@ -473,14 +511,21 @@ def _dotted_results(gray):
                 for hit in found:
                     if not (hit.valid and hit.text):
                         continue
+                    detected = True
                     quad = np.array(
                         [(p.x, p.y) for p in (
                             hit.position.top_left, hit.position.top_right,
                             hit.position.bottom_right,
                             hit.position.bottom_left)], dtype=np.float32) / scale
-                    sym = _symbol_from_dotted(gray, closed, quad, hit.text)
+                    build = (_symbol_from_dotted_tile if relaxed
+                             else _symbol_from_dotted)
+                    sym = build(region, closed, quad, hit.text)
                     if sym is None:
                         continue
+                    if ox or oy:
+                        shift = np.array([ox, oy], dtype=np.float32)
+                        sym.corners = np.asarray(sym.corners, np.float32) + shift
+                        quad = quad + shift
                     dec = DecodeResult()
                     dec.gray = gray
                     dec.symbol = sym
@@ -492,7 +537,40 @@ def _dotted_results(gray):
                     dec.via_grid = True
                     out.append(dec)
                 if out:
-                    return out
+                    return out, detected
+    return [], detected
+
+
+def _dotted_results(gray):
+    """Fallback for dotted / low-contrast codes (e.g. white-on-dark).
+
+    Dot-style symbols defeat zxing's detector. Morphological closing joins the
+    dots of adjacent dark modules without filling light modules, making the
+    symbol readable. Runs only when the normal pipeline decoded nothing.
+    """
+    return _dotted_scan(gray, gray)
+
+
+def _dotted_tiles(gray, tiles=(2, 2), overlap=0.25):
+    """Last resort for small dotted codes the full-frame pass cannot see: scan
+    overlapping tiles with a local (crop) Otsu threshold. Called only when the
+    full-frame dotted pass detected no symbol at all, so screen/moire photos
+    are not re-admitted here. Returns as soon as a symbol is found."""
+    ni, nj = tiles
+    H, W = gray.shape
+    th, tw = H // ni, W // nj
+    oy, ox = int(overlap * th), int(overlap * tw)
+    for i in range(ni):
+        for j in range(nj):
+            y0 = max(0, i * th - oy); y1 = min(H, (i + 1) * th + oy)
+            x0 = max(0, j * tw - ox); x1 = min(W, (j + 1) * tw + ox)
+            crop = gray[y0:y1, x0:x1]
+            if min(crop.shape) < 60:
+                continue
+            decs, _ = _dotted_scan(gray, crop, offset=(x0, y0), relaxed=True,
+                                   kernels=(3, 5, 7), scales=(2, 3))
+            if decs:
+                return decs
     return []
 
 

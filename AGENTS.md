@@ -124,9 +124,14 @@ docker run --rm -p 8501:8501 dm-verifier
   mask, both axes must agree) rather than the first size whose grid pure-decodes
   — a wrong count can still decode (e.g. 32 for a 20x20 dot code). A symbol with
   no consistent pitch (e.g. a photo of a screen with moiré) is rejected as a
-  false positive. Grid decode must match the zxing text exactly. Symbol
-  reflectance is inverted so `grade.py`'s "dark module = low reflectance"
-  assumption holds.
+  false positive. If the full-frame pass detects no symbol at all, the code is
+  likely small, so `_dotted_tiles` retries on overlapping 2x2 crops with a
+  local (crop) Otsu threshold — the global threshold loses these. Tile hits use
+  a relaxed rebuild (`_symbol_from_dotted_tile`) that trusts zxing's text and
+  picks the best-fitting module count. Tiles run only when the full-frame pass
+  detected nothing, so screen/moire photos (which it does detect, then rejects)
+  are not re-admitted. Symbol reflectance is inverted so `grade.py`'s
+  "dark module = low reflectance" assumption holds.
 - `core/detect.py` — L-pattern locator (zxing positions, plus a run-based
   locator for images zxing misses) and grid extraction via perspective warp.
   Handles inverted codes (white-on-dark) by trying both polarities.
@@ -170,8 +175,9 @@ docker run --rm -p 8501:8501 dm-verifier
 - `cv2.imread` fails on paths with Cyrillic characters (Windows path encoding);
   the web service works fine because it decodes upload bytes via `imdecode`.
 - Dotted / white-on-dark codes decode only through `_dotted_results`, which is
-  slower (~1 s/code) and runs after the normal pipeline fails. Grading for them
-  is coarse (reflectance is inverted). Codes photographed on dark backgrounds
+  slower (~1 s/code, several s more when `_dotted_tiles` runs) and runs after
+  the normal pipeline fails. Grading for them is coarse (reflectance is
+  inverted). Codes photographed on dark backgrounds
   or with strong perspective (e.g. product packs) may still fail — the
   run-based L-locator can produce whole-frame / sub-pixel sliver false
   positives, which `decode_all` filters by min-side/aspect/pattern-score.
