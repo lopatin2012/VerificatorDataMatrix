@@ -234,15 +234,46 @@ function render(data) {
   if (state.results.length) {
     renderResult(state.results[0]);
   } else {
-    $("validation").textContent = data.error || "Код не найден";
-    $("validation").style.color = "#c62828";
-    $("score").textContent = "—";
-    $("grade").textContent = "—";
-    $("verdict").textContent = "БРАК";
-    $("reason").textContent = data.error || "Код не найден";
+    renderEmpty(data);
   }
   renderHistory();
   drawScene();
+}
+
+function renderEmpty(data) {
+  const msg = data.error || "Код не найден";
+  $("validation").textContent = msg;
+  $("validation").style.color = "#c62828";
+  $("score").textContent = "—";
+  $("score").style.color = "#607d8b";
+  $("grade").textContent = "—";
+  $("grade").style.color = "#607d8b";
+  drawGauge(0, "#cfd8dc");
+  $("verdict").textContent = "БРАК";
+  $("verdict").style.color = "#c62828";
+  $("reason").textContent = msg;
+  renderParamsEmpty();
+  $("defects").innerHTML =
+    '<div class="defect" style="border-color:#90a4ae">' +
+    '<div class="dtitle">Код не найден</div>' +
+    '<div class="drec">Дефекты не определены.</div></div>';
+  renderData({});
+  $("reporttext").textContent = "";
+  $("pdfbtn").disabled = true;
+}
+
+function renderParamsEmpty() {
+  const wrap = $("params");
+  wrap.innerHTML = "";
+  const keys = ["Контраст символа", "Неоднородность сетки",
+                "Размерность печати X", "Последовательность тактовых модулей"];
+  keys.forEach(k => {
+    const row = document.createElement("div");
+    row.className = "param";
+    row.innerHTML = '<span class="pname">' + k + '</span>' +
+      '<span class="ptrack"></span><span class="pval">—</span>';
+    wrap.appendChild(row);
+  });
 }
 
 function renderCodeSelect() {
@@ -294,6 +325,7 @@ function renderResult(r) {
   renderDefects(r);
   renderData(r);
   renderReport(r);
+  $("pdfbtn").disabled = false;
 }
 
 function renderParams(data) {

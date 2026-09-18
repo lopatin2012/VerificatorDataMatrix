@@ -88,7 +88,9 @@ docker run --rm -p 8501:8501 dm-verifier
 - `webapp.py` + `webui/` — Flask/waitress web service (upload, camera,
   heatmap drawn client-side, PDF download, history strip with CSV/PDF export).
   When nothing is found `/api/analyze` still returns the `image` (plus
-  `error`), and the client canvas draws a "Код не найден" banner on it.
+  `error`), the client canvas draws a "Код не найден" banner on it, and the
+  gauge/params/defects/data panels are reset (no stale values from the
+  previous check).
   REST: `/api/analyze` (returns `{image, results:[...]}` — one entry per code,
   each with its own `result_id`), `/api/history`, `/api/history/clear` (POST),
   `/api/result/<id>` (reload a past check), `/api/history.csv`,

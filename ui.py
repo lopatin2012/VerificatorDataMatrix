@@ -619,6 +619,10 @@ class VerifierApp:
         for w in self.chips_frame.winfo_children():
             w.destroy()
         if not res:
+            self.content_raw_var.set("")
+            self.content_var.set("—")
+            self.copy_all_btn.configure(state=tk.DISABLED,
+                                        text="Скопировать содержимое")
             return
         raw = plain_content(res)
         self.content_raw_var.set(raw)
