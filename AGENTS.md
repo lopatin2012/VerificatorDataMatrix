@@ -21,6 +21,25 @@ Machine-local data, absent from git:
 Dotted and inverted (white-on-dark) symbols decode through a dedicated
 fallback (see `_dotted_results`); grading for them is coarse.
 
+## Known gaps / TODO
+
+- **Grade determination still needs work — this is the main remaining item.**
+  `core/grade.py` thresholds are approximate and do NOT reproduce the Axicon
+  reference. The `G0..G4` labels in the local sample filenames are the owner's
+  reference grades, not ours, and our overall class often differs. Calibration
+  needs a labeled set of real codes with reference grades (per parameter and
+  overall); the owner is collecting them. Until then, do not claim grade
+  accuracy.
+- **Read/no-read threshold for very poor codes.** Some codes the reference
+  treats as errors are still decoded here as class 0 (e.g. local sample
+  `samples/G_ERROR_9`, ex-`G0_1`). No rule marks such reads as errors yet.
+- **Local unreadable samples** (not in git): `G0_5`, `G1_1`, `G1_2`,
+  `G_ERROR_1`, `G_ERROR_3`, `G_ERROR_10` are not decoded by any path (only
+  `G_ERROR_3` reaches zxing, with a ChecksumError).
+- Dotted / white-on-dark grading is coarser than solid codes (see Gotchas).
+- Optional / unscheduled: persist web history (currently in-memory LRU);
+  add an upload-size limit and/or auth when `--web` is exposed beyond localhost.
+
 ## Versioning
 
 `VERSION` lives in `version.py` (currently `1.0.21`), shown in the window title,
