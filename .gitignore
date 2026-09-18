@@ -15,6 +15,7 @@ Thumbs.db
 
 # Generated / runtime artifacts
 webui/_report.pdf
+webui/_history.pdf
 *.log
 
 # Sample photos

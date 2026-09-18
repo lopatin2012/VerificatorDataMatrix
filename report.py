@@ -240,3 +240,94 @@ def build_pdf(res, frame_bgr, path):
     except OSError:
         pass
     return path
+
+
+def build_history_pdf(entries, path):
+    """Write a summary report of the verification history to `path`.
+
+    `entries` is a newest-first list of serialized results, each with an
+    extra `ts_text` timestamp string.
+    """
+    _register_fonts()
+    F = _FONTS["normal"]
+    FB = _FONTS["bold"]
+
+    s_title = ParagraphStyle("title", fontName=FB, fontSize=16, leading=20,
+                             textColor=colors.HexColor("#1a237e"))
+    s_sub = ParagraphStyle("sub", fontName=F, fontSize=9, leading=12,
+                           textColor=colors.HexColor("#78909c"))
+    s_cell = ParagraphStyle("cell", fontName=F, fontSize=8.5, leading=11)
+    s_hcell = ParagraphStyle("hcell", fontName=FB, fontSize=9, leading=12,
+                             textColor=colors.white)
+
+    doc = SimpleDocTemplate(path, pagesize=A4,
+                            leftMargin=14 * mm, rightMargin=14 * mm,
+                            topMargin=14 * mm, bottomMargin=14 * mm,
+                            title=f"История проверок DataMatrix {VERSION}",
+                            author="DataMatrix Verifier")
+    now = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+    n_ok = sum(1 for e in entries if e.get("good"))
+
+    story = []
+    title_table = Table(
+        [[Paragraph("История проверок", s_title),
+          Paragraph(f"DataMatrix Verifier v{VERSION}<br/>{now}", s_sub)]],
+        colWidths=[120 * mm, 60 * mm])
+    title_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("LINEBELOW", (0, 0), (-1, 0), 1.5, colors.HexColor("#1a237e")),
+    ]))
+    story.append(title_table)
+    story.append(Spacer(1, 4 * mm))
+    story.append(Paragraph(
+        f"Всего проверок: {len(entries)} · OK: {n_ok} · "
+        f"Брак: {len(entries) - n_ok}",
+        ParagraphStyle("sum", fontName=F, fontSize=10, leading=14)))
+    story.append(Spacer(1, 3 * mm))
+
+    header = [Paragraph("№", s_hcell), Paragraph("Время", s_hcell),
+              Paragraph("Валидация", s_hcell), Paragraph("Класс", s_hcell),
+              Paragraph("Оценка", s_hcell), Paragraph("Содержимое", s_hcell)]
+    data = [header]
+    for i, d in enumerate(entries, start=1):
+        data.append([
+            Paragraph(str(i), s_cell),
+            Paragraph(_clean_para(d.get("ts_text", "")), s_cell),
+            Paragraph(_clean_para(d.get("validation") or ""), s_cell),
+            Paragraph(_clean_para(d.get("overall_class") or "—"), s_cell),
+            Paragraph(str(d.get("score", "—")), s_cell),
+            Paragraph(_clean_para(d.get("content") or "(не декодировано)"),
+                      s_cell),
+        ])
+    widths = [10 * mm, 32 * mm, 22 * mm, 34 * mm, 16 * mm, 64 * mm]
+    table = Table(data, colWidths=widths, repeatRows=1)
+    style = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a237e")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#b0bec5")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cfd8dc")),
+    ]
+    for i, d in enumerate(entries, start=1):
+        if i % 2 == 0:
+            style.append(("BACKGROUND", (0, i), (-1, i),
+                          colors.HexColor("#f3f5f9")))
+        c = (colors.HexColor("#2e7d32") if d.get("good")
+             else colors.HexColor("#c62828"))
+        style.append(("TEXTCOLOR", (2, i), (2, i), c))
+    table.setStyle(TableStyle(style))
+    story.append(table)
+
+    def footer(canvas, docobj):
+        canvas.saveState()
+        canvas.setFont(F, 8)
+        canvas.setFillColor(colors.HexColor("#90a4ae"))
+        canvas.drawString(14 * mm, 9 * mm,
+                          f"DataMatrix Verifier v{VERSION} · {now}")
+        canvas.drawRightString(A4[0] - 14 * mm, 9 * mm, f"Стр. {docobj.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    return path

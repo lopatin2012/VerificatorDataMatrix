@@ -23,7 +23,7 @@ fallback (see `_dotted_results`); grading for them is coarse.
 
 ## Versioning
 
-`VERSION` lives in `version.py` (currently `1.0.19`), shown in the window title,
+`VERSION` lives in `version.py` (currently `1.0.20`), shown in the window title,
 CLI (`--version`) and PDF footer. Rules:
 
 - **Patch** (`1.0.x`): bump after every change to this `AGENTS.md` file.
@@ -79,12 +79,17 @@ docker run --rm -p 8501:8501 dm-verifier
 - `ui.py` — Tkinter dashboard (scene with zoom/rotate/channel + heatmap,
   gauge, defect cards, GS1 chips, PDF, history strip).
 - `webapp.py` + `webui/` — Flask/waitress web service (upload, camera,
-  heatmap drawn client-side, PDF download). REST: `/api/analyze` (returns
-  `{image, results:[...]}` — one entry per code, each with its own
-  `result_id`), `/api/pdf`, `/api/version`. Results live in an in-memory LRU
-  (50 entries), so `/api/pdf` 404s once a `result_id` ages out. Responses get
-  `Cache-Control: no-store` (added via `@app.after_request`) so browsers pick
-  up edited JS/CSS immediately. Start via `main.py --web`.
+  heatmap drawn client-side, PDF download, history strip with CSV/PDF export).
+  REST: `/api/analyze` (returns `{image, results:[...]}` — one entry per code,
+  each with its own `result_id`), `/api/history`, `/api/result/<id>` (reload a
+  past check), `/api/history.csv`, `/api/history.pdf`, `/api/pdf`,
+  `/api/version`. Each stored entry keeps `{res, img, payload, thumb, ts}`.
+  Results live in an in-memory LRU (50 entries), so a `result_id` (and its
+  history entry) 404s once it ages out; history is lost on restart. Responses
+  get `Cache-Control: no-store` (added via `@app.after_request`) so browsers
+  pick up edited JS/CSS immediately. Start via `main.py --web`.
+- `report.py` also has `build_history_pdf(entries, path)` for the history
+  export (`build_pdf` stays the per-code report).
 - `report.py` — official PDF report (build_pdf), used by BOTH the web service
   and the GUI "Сформировать PDF отчёт" button (ui.py imports it too).
 - `visual.py` — legacy `overlay_image()` heatmap builder; it is tracked but no

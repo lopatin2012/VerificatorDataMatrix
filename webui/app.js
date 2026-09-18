@@ -9,7 +9,7 @@ const state = {
   rotate: 0,
   channel: "color",
   focus: null,
-  analyzed: 0,
+  history: [],
   showOverlay: true,
 };
 
@@ -226,6 +226,7 @@ function render(data) {
     $("verdict").textContent = "БРАК";
     $("reason").textContent = data.error || "Код не найден";
   }
+  renderHistory();
   drawScene();
 }
 
@@ -389,6 +390,56 @@ function renderReport(data) {
   $("reporttext").textContent = lines.join("\n");
 }
 
+// ------------------------------------------------------------- history
+
+async function loadHistory() {
+  try {
+    const r = await fetch("api/history");
+    const j = await r.json();
+    state.history = j.items || [];
+  } catch (e) { return; }
+  renderHistory();
+}
+
+function renderHistory() {
+  const strip = $("historystrip");
+  if (!strip) return;
+  strip.innerHTML = "";
+  const items = state.history || [];
+  const ok = items.filter(it => it.good).length;
+  $("history").textContent = "Проанализировано: " + items.length + " кодов. " +
+    ok + " - OK, " + (items.length - ok) + " - Брак";
+  const activeId = state.result && state.result.result_id;
+  items.forEach(it => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "histitem " + (it.good ? "ok" : "bad") +
+      (it.result_id === activeId ? " active" : "");
+    btn.title = it.validation + " · " + (it.overall_class || "") +
+      " · " + (it.content || "(не декодировано)");
+    const img = document.createElement("img");
+    img.src = it.thumb;
+    img.alt = "";
+    const cap = document.createElement("span");
+    cap.className = "histcap";
+    cap.textContent = (it.good ? "OK" : "БРАК") + " · " + it.score;
+    btn.appendChild(img);
+    btn.appendChild(cap);
+    btn.addEventListener("click", () => loadResult(it.result_id));
+    strip.appendChild(btn);
+  });
+}
+
+async function loadResult(rid) {
+  try {
+    const r = await fetch("api/result/" + rid);
+    if (!r.ok) return;
+    const data = await r.json();
+    setImage(data.image);
+    render(data);
+  } catch (e) { /* ignore */ }
+}
+
 // ------------------------------------------------------------- analysis
 
 function setImage(dataUrl) {
@@ -412,8 +463,7 @@ async function analyze(file) {
     }
     setImage(data.image);
     render(data);
-    state.analyzed++;
-    $("history").textContent = "Проанализировано: " + state.analyzed + " кодов";
+    loadHistory();
   } catch (e) {
     $("validation").textContent = "Ошибка сети: " + e;
     $("validation").style.color = "#c62828";
@@ -513,7 +563,16 @@ function wireControls() {
   });
 }
 
+function wireHistoryExports() {
+  const csv = $("csvbtn");
+  if (csv) csv.addEventListener("click", () => { window.location = "api/history.csv"; });
+  const pdf = $("hpdfbtn");
+  if (pdf) pdf.addEventListener("click", () => { window.location = "api/history.pdf"; });
+}
+
 fetchVersion();
 wireDropzone();
 wireCamera();
 wireControls();
+wireHistoryExports();
+loadHistory();
