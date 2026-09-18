@@ -26,3 +26,6 @@ samples/
 # Training files and model weights
 training/
 models/
+
+# Reference PDFs — kept locally, never committed
+docs/

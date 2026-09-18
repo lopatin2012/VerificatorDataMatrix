@@ -72,9 +72,10 @@ docker run --rm -p 8501:8501 dm-verifier
   `https://github.com/lopatin2012/VerificatorDataMatrix.git`.
 - `LICENSE` — MIT, Copyright (c) 2026 Maxim Lopatin (attribution required);
   keep it and the README license section on redistribution.
-- `samples/`, `models/`, `training/` are **`.gitignore`d** — a fresh clone has
-  none of them. The `samples` commands above and the NN fallback only work on
-  this machine's working copy.
+- `samples/`, `models/`, `training/`, `docs/` are **`.gitignore`d** — a fresh
+  clone has none of them. The `samples` commands above and the NN fallback only
+  work on this machine's working copy; `docs/` (CRPT PDFs) must never be
+  committed.
 
 ## Build / release
 
@@ -205,7 +206,7 @@ docker run --rm -p 8501:8501 dm-verifier
 ## Chestny Znak (ЧЗ) — offline only
 
 The app is deliberately **fully offline**; it never calls ЧЗ. Decision made
-after reading `docs/True_API_GIS_MT.pdf` and `docs/API_СУЗ_3.0.pdf` (untracked,
+after reading `docs/True_API_GIS_MT.pdf` and `docs/API_СУЗ_3.0.pdf` (gitignored,
 not in git):
 
 - There is **no token-free method** to get product info by DataMatrix code.
