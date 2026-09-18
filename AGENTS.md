@@ -70,6 +70,8 @@ docker run --rm -p 8501:8501 dm-verifier
 
 - Git repo, branch `master`, remote
   `https://github.com/lopatin2012/VerificatorDataMatrix.git`.
+- `LICENSE` — MIT, Copyright (c) 2026 Maxim Lopatin (attribution required);
+  keep it and the README license section on redistribution.
 - `samples/`, `models/`, `training/` are **`.gitignore`d** — a fresh clone has
   none of them. The `samples` commands above and the NN fallback only work on
   this machine's working copy.
