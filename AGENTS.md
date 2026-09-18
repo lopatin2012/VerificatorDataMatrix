@@ -76,6 +76,17 @@ docker run --rm -p 8501:8501 dm-verifier
   none of them. The `samples` commands above and the NN fallback only work on
   this machine's working copy.
 
+## Build / release
+
+- `build.spec` + `build.ps1` build a single-file Windows exe for end users
+  (`dist/DataMatrixVerifier.exe`) with PyInstaller, so they need no Python or
+  deps. It bundles `webui/` + `favicon.ico` and **excludes torch** (the NN
+  locator is skipped at runtime); `build/` and `dist/` are gitignored.
+- PyInstaller lives in the repo venv (not in `requirements.txt`):
+  `.venv\Scripts\python.exe -m pip install pyinstaller`, then `.\build.ps1`.
+- Releases are published on GitHub with `gh release create v<version>`
+  attaching the built exe; the tag matches `version.py`.
+
 ## Architecture
 
 - `verifier.analyze_all(img)` is the entry point: decode + grid + grades + GS1

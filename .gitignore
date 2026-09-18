@@ -16,6 +16,10 @@ Thumbs.db
 # Generated / runtime artifacts
 *.log
 
+# PyInstaller build output
+build/
+dist/
+
 # Sample photos
 samples/
 

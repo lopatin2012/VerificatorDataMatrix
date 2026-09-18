@@ -67,6 +67,20 @@ docker build -t dm-verifier .
 docker run --rm -p 8501:8501 dm-verifier
 ```
 
+## Сборка (один exe для пользователя)
+
+Самодостаточный файл `dist\DataMatrixVerifier.exe` — Python и зависимости
+внутри, ничего ставить не нужно (GUI, CLI и веб-режим).
+
+```
+.venv\Scripts\python.exe -m pip install pyinstaller
+.\build.ps1
+```
+
+Сборка лёгкая: без torch, поэтому нейросетевой локатор не включается, а всё
+остальное (zxing-cpp, OpenCV, отчёты, веб) работает. Готовый exe прикрепляется
+к релизам на GitHub с тегом, совпадающим с `version.py`.
+
 Один файл:
 ```
 .venv\Scripts\python.exe main.py --file samples/G4_1.jpg
