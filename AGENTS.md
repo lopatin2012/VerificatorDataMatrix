@@ -110,12 +110,23 @@ docker run --rm -p 8501:8501 dm-verifier
   kept (for grading) only if their L+timing pattern score is strong, their grid
   is >= 8 modules per side and the quad passes the min-side/aspect checks — the
   run-based locator can emit whole-frame / tiny (4x4) false positives.
+  A successful direct decode also supplies the exact module count: `_barcode_size`
+  reads it from `Barcode.to_image(scale=1)` (1 px/module; bbox of dark modules),
+  and `_symbol_for_quad(size_hint=...)` resamples at that count (trying small
+  quad scalings) so geometry is right. A wrong count can still decode (e.g. a
+  `20x4` grid for a 22x22 symbol), so the hint wins, and if the grid cannot
+  itself decode there (glare) the hinted geometry is still used.
 - Dotted / white-on-dark codes: `_dotted_results` (runs only when nothing
   decoded) closes the dot mask with a small elliptical kernel, lets zxing find
   the symbol, then rebuilds the grid from the zxing quad by warping
   `255 - closed` to a square and resampling N×N (`_DOT_MODULE_SIZES`, 10..32).
-  Grid decode must match the zxing text exactly. Symbol reflectance is inverted
-  so `grade.py`'s "dark module = low reflectance" assumption holds.
+  N is chosen from the symbol's own dot pitch (`_dot_pitch`, FFT of the warped
+  mask, both axes must agree) rather than the first size whose grid pure-decodes
+  — a wrong count can still decode (e.g. 32 for a 20x20 dot code). A symbol with
+  no consistent pitch (e.g. a photo of a screen with moiré) is rejected as a
+  false positive. Grid decode must match the zxing text exactly. Symbol
+  reflectance is inverted so `grade.py`'s "dark module = low reflectance"
+  assumption holds.
 - `core/detect.py` — L-pattern locator (zxing positions, plus a run-based
   locator for images zxing misses) and grid extraction via perspective warp.
   Handles inverted codes (white-on-dark) by trying both polarities.
@@ -125,10 +136,11 @@ docker run --rm -p 8501:8501 dm-verifier
   locator is skipped silently. Last-resort fallback: NN crop → classic decode.
   Model weights in `models/dm_corners.pth` (gitignored). Training code in
   `training/` (gitignored; GPU; ML deps in `requirements-ml.txt`, NOT required).
-- Sample codes are all **20x20 or 22x22**, but `_candidate_sizes` now tries
-  the auto-detected module count (and nearby even sizes) first, then 20x20/
-  22x22 — verified by decoding the reconstructed grid (is_pure trusts the
-  grid, so decode success confirms the module count).
+- Sample codes are mostly **20x20 or 22x22**, but `_candidate_sizes` tries the
+  exact count reported by zxing (`_barcode_size`) first, then the auto-detected
+  module count (and nearby even sizes), then 20x20/22x22. A wrong grid size can
+  still decode, so the zxing size hint is authoritative; without one, decode
+  success of the reconstructed grid is the confirmation.
 - `core/grade.py` — parameter grades 0–4; thresholds are lenient to match the
   reference output ("48% contrast → grade 4"). Parameter names follow the
   Axicon reference (Размерность печати, Левая/Нижняя часть шаблона "L",

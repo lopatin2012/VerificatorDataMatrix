@@ -328,12 +328,42 @@ def decode(img, _depth=0):
 _DOT_MODULE_SIZES = tuple(range(10, 33, 2))
 _DOT_CLOSE_KS = (3, 5, 7, 9, 11)
 _DOT_WARP = 600
+# Rebuilt grid must match the fixed pattern at least this well; below it the
+# reconstruction is treated as a false positive (e.g. a photo of a screen).
+_DOT_REBUILD_MIN_SCORE = 1.25
 
 
 def _white_mask(gray):
     """Binary mask of the printed modules (works for white-on-dark codes)."""
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return bw
+
+
+def _dot_pitch(wmask):
+    """Module pitch (modules per symbol side) from the dotted mask's
+    periodicity, plus a prominence measure.
+
+    Both axes' spectra must peak at the same period (within one module), else
+    None is returned. A wrong module count can still pure-decode, so the pitch
+    is used to pick the size that matches the symbol's own lattice.
+    """
+    dark = (wmask < 128).astype(np.float32)
+    est = []
+    for prof in (dark.mean(axis=0), dark.mean(axis=1)):
+        p = prof - prof.mean()
+        f = np.abs(np.fft.rfft(p)) ** 2
+        fr = np.fft.rfftfreq(len(p), d=1.0 / _DOT_WARP)
+        band = (fr >= 8) & (fr <= 34)
+        if not band.any():
+            return None
+        fb, pb = fr[band], f[band]
+        k = int(np.argmax(pb))
+        prom = float(pb[k] / (np.median(pb) + 1e-9))
+        est.append((float(fb[k]), prom))
+    (p0, r0), (p1, r1) = est
+    if abs(p0 - p1) > 1.0:
+        return None
+    return 0.5 * (p0 + p1), min(r0, r1)
 
 
 def _pure_grid_text(grid, pad=3, scale=12):
@@ -366,31 +396,57 @@ def _symbol_from_dotted(gray, closed, quad, expected):
                                 flags=cv2.INTER_LINEAR)
     wgray = cv2.warpPerspective(gray, M, (S, S), flags=cv2.INTER_LINEAR)
 
-    for n in _DOT_MODULE_SIZES:
+    def grid_at(n):
         cell = cv2.resize(wmask, (n, n), interpolation=cv2.INTER_AREA)
         _, bw = cv2.threshold(cell, 0, 255,
                               cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        grid = bw < 128
-        if _pure_grid_text(grid) != expected:
-            continue
-        ref = cv2.resize(wgray, (n, n),
-                         interpolation=cv2.INTER_AREA).astype(np.float64)
-        # grade.py expects dark modules to have low reflectance.
-        if ref[grid].mean() > ref[~grid].mean():
-            ref = 255.0 - ref
-        sym = detect.Symbol()
-        sym.corners = np.asarray(quad, dtype=np.float32)
-        sym.rows = sym.cols = n
-        q = np.asarray(quad, dtype=np.float32)
-        side = 0.25 * sum(
-            float(np.hypot(*(q[(i + 1) % 4] - q[i]))) for i in range(4))
-        sym.module_px = side / n
-        sym.grid = grid
-        sym.reflectance = ref
-        sym.inverted = True
-        sym.l_corner = "bl"
-        return sym
-    return None
+        return bw < 128
+
+    # Sizes whose rebuilt grid decodes to the text zxing already recovered.
+    pure = {}
+    for n in _DOT_MODULE_SIZES:
+        g = grid_at(n)
+        if _pure_grid_text(g) == expected:
+            pure[n] = _pattern_score_grid(g)
+
+    # The dot pitch is the symbol's own lattice, so trust it over a pure
+    # decode: a wrong module count can still decode (e.g. 32 for a 20x20
+    # symbol), giving bogus geometry. No consistent pitch -> false positive.
+    n = None
+    pe = _dot_pitch(wmask)
+    if pe is not None:
+        pitch, _prom = pe
+        n0 = max(_DOT_MODULE_SIZES[0],
+                 min(_DOT_MODULE_SIZES[-1], int(round(pitch / 2.0) * 2)))
+        if n0 in pure:
+            n = n0
+        else:
+            near = [k for k in pure if abs(k - n0) <= 2]
+            if near:
+                n = min(near, key=lambda k: abs(k - n0))
+            elif _pattern_score_grid(grid_at(n0)) >= _DOT_REBUILD_MIN_SCORE:
+                n = n0
+    if n is None:
+        return None
+
+    grid = grid_at(n)
+    ref = cv2.resize(wgray, (n, n),
+                     interpolation=cv2.INTER_AREA).astype(np.float64)
+    # grade.py expects dark modules to have low reflectance.
+    if ref[grid].mean() > ref[~grid].mean():
+        ref = 255.0 - ref
+    sym = detect.Symbol()
+    sym.corners = np.asarray(quad, dtype=np.float32)
+    sym.rows = sym.cols = n
+    q = np.asarray(quad, dtype=np.float32)
+    side = 0.25 * sum(
+        float(np.hypot(*(q[(i + 1) % 4] - q[i]))) for i in range(4))
+    sym.module_px = side / n
+    sym.grid = grid
+    sym.reflectance = ref
+    sym.inverted = True
+    sym.l_corner = "bl"
+    return sym
 
 
 def _dotted_results(gray):
@@ -441,13 +497,17 @@ def _dotted_results(gray):
 
 
 def _pattern_score(sym):
-    """How well the grid matches the fixed pattern (L + timing) at its size.
+    """How well the grid matches the fixed pattern (L + timing) at its size."""
+    return _pattern_score_grid(sym.grid)
+
+
+def _pattern_score_grid(grid):
+    """Pattern fit of a bool grid (True = dark module).
 
     At the correct module count the bottom row and left column are solid
     (L pattern) and the top row / right column alternate (timing). A wrong
     count degrades these fractions sharply.
     """
-    grid = sym.grid
     n_rows, n_cols = grid.shape
     if n_rows < 4 or n_cols < 4:
         return 0.0
