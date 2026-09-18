@@ -190,3 +190,26 @@ docker run --rm -p 8501:8501 dm-verifier
   run-based L-locator can produce whole-frame / sub-pixel sliver false
   positives, which `decode_all` filters by min-side/aspect/pattern-score.
 - Grading is approximate, not calibrated to the Axicon reference tool.
+
+## Chestny Znak (ЧЗ) — offline only
+
+The app is deliberately **fully offline**; it never calls ЧЗ. Decision made
+after reading `docs/True_API_GIS_MT.pdf` and `docs/API_СУЗ_3.0.pdf` (untracked,
+not in git):
+
+- There is **no token-free method** to get product info by DataMatrix code.
+  Product/code lookups all require a Bearer token:
+  `POST /api/v3/true-api/cises/info`, `POST /cises/short/list`, `/cises/list`,
+  and by-GTIN `POST /api/v4/true-api/product/info` — examples all send
+  `Authorization: Bearer <ТОКЕН>`. "Публичный" in the docs means "any
+  authenticated participant", not anonymous.
+- Genuinely `без токена` are only `GET /participants?inns=...` and
+  `GET /api/v4/true-api/edo/inn/{inn}` — neither returns product info.
+- The token comes from a УКЭП (`/auth/key` → `/auth/simpleSignIn`), i.e. a
+  participant account is required.
+- Stands: `https://markirovka.crpt.ru/api/v3/true-api` (and `/v4/true-api`);
+  sandbox `https://markirovka.sandbox.crptech.ru/...`. `API_СУЗ` is
+  СУЗ-ОБЛАКО (orders/emission), no consumer lookup either.
+
+If a "Сведения в ЧЗ" feature is ever wanted, it must be token-based (network +
+participant credentials), so it is opt-in and never on by default.
