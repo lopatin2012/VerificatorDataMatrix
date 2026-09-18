@@ -216,6 +216,13 @@ def _decode_impl(img, _depth):
                 continue
         results.append(dec)
 
+    # Dotted / low-contrast codes (e.g. white-on-dark): morphological closing
+    # joins the dots so zxing can find the symbol.
+    if not any(r.ok for r in results):
+        dotted = _dotted_results(gray)
+        if dotted:
+            results = dotted
+
     # Last resort: neural-net locator (crop + classic decode).
     if not results and _depth == 0:
         results = _nn_fallback_all(gray)
@@ -240,6 +247,124 @@ def decode(img, _depth=0):
     if results:
         return results[0]
     return DecodeResult()
+
+
+# ---- dotted / white-on-dark fallback ----
+
+# Even ECC200 square sizes to try when rebuilding a dotted symbol's grid.
+_DOT_MODULE_SIZES = tuple(range(10, 33, 2))
+_DOT_CLOSE_KS = (3, 5, 7, 9, 11)
+_DOT_WARP = 600
+
+
+def _white_mask(gray):
+    """Binary mask of the printed modules (works for white-on-dark codes)."""
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return bw
+
+
+def _pure_grid_text(grid, pad=3, scale=12):
+    """Decode a canonical binary grid (True = dark module) via zxing is_pure."""
+    img = np.where(grid, 0, 255).astype(np.uint8)
+    img = cv2.copyMakeBorder(img, pad, pad, pad, pad,
+                             cv2.BORDER_CONSTANT, value=255)
+    img = cv2.resize(img, None, fx=scale, fy=scale,
+                     interpolation=cv2.INTER_NEAREST)
+    found = zxingcpp.read_barcodes(
+        Image.fromarray(img), formats=zxingcpp.BarcodeFormat.DataMatrix,
+        is_pure=True)
+    for b in found:
+        if b.valid and b.text:
+            return b.text
+    return None
+
+
+def _symbol_from_dotted(gray, closed, quad, expected):
+    """Rebuild a Symbol for a dotted code from its zxing quad.
+
+    `closed` is a binary image with printed modules white (255). zxing orders
+    the quad corners in symbol coordinates, so the module lattice maps
+    directly to canonical grid coordinates.
+    """
+    S = _DOT_WARP
+    dst = np.array([[0, 0], [S, 0], [S, S], [0, S]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(np.asarray(quad, dtype=np.float32), dst)
+    wmask = cv2.warpPerspective(255 - closed, M, (S, S),
+                                flags=cv2.INTER_LINEAR)
+    wgray = cv2.warpPerspective(gray, M, (S, S), flags=cv2.INTER_LINEAR)
+
+    for n in _DOT_MODULE_SIZES:
+        cell = cv2.resize(wmask, (n, n), interpolation=cv2.INTER_AREA)
+        _, bw = cv2.threshold(cell, 0, 255,
+                              cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        grid = bw < 128
+        if _pure_grid_text(grid) != expected:
+            continue
+        ref = cv2.resize(wgray, (n, n),
+                         interpolation=cv2.INTER_AREA).astype(np.float64)
+        # grade.py expects dark modules to have low reflectance.
+        if ref[grid].mean() > ref[~grid].mean():
+            ref = 255.0 - ref
+        sym = detect.Symbol()
+        sym.corners = np.asarray(quad, dtype=np.float32)
+        sym.rows = sym.cols = n
+        q = np.asarray(quad, dtype=np.float32)
+        side = 0.25 * sum(
+            float(np.hypot(*(q[(i + 1) % 4] - q[i]))) for i in range(4))
+        sym.module_px = side / n
+        sym.grid = grid
+        sym.reflectance = ref
+        sym.inverted = True
+        sym.l_corner = "bl"
+        return sym
+    return None
+
+
+def _dotted_results(gray):
+    """Fallback for dotted / low-contrast codes (e.g. white-on-dark).
+
+    Dot-style symbols defeat zxing's detector. Morphological closing joins
+    the dots of adjacent dark modules without filling light modules, making
+    the symbol readable. Runs only when the normal pipeline decoded nothing.
+    """
+    base = _white_mask(gray)
+    for polarity in (base, 255 - base):
+        for k in _DOT_CLOSE_KS:
+            ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+            closed = cv2.morphologyEx(polarity, cv2.MORPH_CLOSE, ker)
+            for scale in (1, 2):
+                img = closed if scale == 1 else cv2.resize(
+                    closed, None, fx=scale, fy=scale,
+                    interpolation=cv2.INTER_CUBIC)
+                found = zxingcpp.read_barcodes(
+                    Image.fromarray(img),
+                    formats=zxingcpp.BarcodeFormat.DataMatrix,
+                    try_rotate=True, try_invert=True, try_downscale=True)
+                out = []
+                for hit in found:
+                    if not (hit.valid and hit.text):
+                        continue
+                    quad = np.array(
+                        [(p.x, p.y) for p in (
+                            hit.position.top_left, hit.position.top_right,
+                            hit.position.bottom_right,
+                            hit.position.bottom_left)], dtype=np.float32) / scale
+                    sym = _symbol_from_dotted(gray, closed, quad, hit.text)
+                    if sym is None:
+                        continue
+                    dec = DecodeResult()
+                    dec.gray = gray
+                    dec.symbol = sym
+                    dec.ok = True
+                    dec.text = hit.text
+                    dec.bytes = bytes(hit.bytes)
+                    dec.position = [(float(x), float(y)) for x, y in quad]
+                    dec.quad = detect._order_quad(quad)
+                    dec.via_grid = True
+                    out.append(dec)
+                if out:
+                    return out
+    return []
 
 
 def _pattern_score(sym):
