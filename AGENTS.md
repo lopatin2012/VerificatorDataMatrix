@@ -4,19 +4,19 @@
 
 Python app for **GS1 DataMatrix verification** (ISO/IEC 15415-style grading,
 decode via zxing-cpp). Git repo on `master`; remote `origin` =
-`https://github.com/lopatin2012/VerificatorDataMatrix.git`. History so far:
-initial app → favicon + decode-speedup + block-display fix → GS-separator
-copy + UI polish → Docker → dotted / white-on-dark decode. The working tree
-often also carries uncommitted edits — run `git status` before assuming it is
-clean.
+`https://github.com/lopatin2012/VerificatorDataMatrix.git`.
 
-Machine-local data, absent from git:
-- `samples/`, `training/`, `models/` — gitignored and not in this checkout;
-  older "14/24 sample images" stats and `--dir samples` refer to them.
-- `test_image_codes/` — real product-pack photos, present in this checkout but
-  UNTRACKED (not listed in `.gitignore`, so a bare `git add .` would stage
-  them; only `.dockerignore` excludes them). Handy for `--dir test_image_codes`
-  manual runs.
+Machine-local, gitignored data (present in this working copy, absent from a
+fresh clone):
+- `samples/` — reference-graded images `G0_*`…`G4_*` / `G_ERROR_*`; the
+  expanding calibration set lives in `samples/new_codes/`. `--dir samples`
+  works locally.
+- `models/` — NN locator weights (`dm_corners.pth`).
+- `training/` — NN training code (GPU; not required by the app).
+- `docs/` — CRPT reference PDFs (see the ЧЗ section); never commit them.
+- `test_image_codes/` — product-pack photos; not in this checkout, but
+  `.dockerignore` still excludes it. README's `--dir test_image_codes` only
+  works if that folder is present.
 
 Dotted and inverted (white-on-dark) symbols decode through a dedicated
 fallback (see `_dotted_results`); grading for them is coarse.
@@ -33,16 +33,18 @@ fallback (see `_dotted_results`); grading for them is coarse.
 - **Read/no-read threshold for very poor codes.** Some codes the reference
   treats as errors are still decoded here as class 0 (e.g. local sample
   `samples/G_ERROR_9`, ex-`G0_1`). No rule marks such reads as errors yet.
-- **Local unreadable samples** (not in git): `G0_5`, `G1_1`, `G1_2`,
-  `G_ERROR_1`, `G_ERROR_3`, `G_ERROR_10` are not decoded by any path (only
+- **Local unreadable samples** (not in git): `samples/G0_5`, `samples/G1_1`,
+  `samples/G1_2`, `samples/G_ERROR_1`, `samples/G_ERROR_3` and
+  `samples/new_codes/G_ERROR_10` are not decoded by any path (only
   `G_ERROR_3` reaches zxing, with a ChecksumError).
 - Dotted / white-on-dark grading is coarser than solid codes (see Gotchas).
-- Optional / unscheduled: persist web history (currently in-memory LRU);
-  add an upload-size limit and/or auth when `--web` is exposed beyond localhost.
+- Optional / unscheduled: persist web history (currently in-memory LRU); add
+  auth when `--web` is exposed beyond localhost (uploads are already capped at
+  25 MB via `MAX_CONTENT_LENGTH`).
 
 ## Versioning
 
-`VERSION` lives in `version.py` (currently `1.0.21`), shown in the window title,
+`VERSION` lives in `version.py` (currently `1.0.31`), shown in the window title,
 CLI (`--version`) and PDF footer. Rules:
 
 - **Patch** (`1.0.x`): bump after every change to this `AGENTS.md` file.
@@ -55,8 +57,9 @@ When in doubt, follow semver order: patch < minor < major.
 
 ## Environment
 
-- Core app runs in the repo venv: `.venv\Scripts\python.exe` (Python 3.11.9,
-  core deps installed). It has **no torch**, so the NN locator is skipped there.
+- Core app runs in the repo venv: `.venv\Scripts\python.exe` (README claims
+  Python 3.13, but the venv on this machine is actually 3.11.9; core deps are
+  installed). It has **no torch**, so the NN locator is skipped there.
 - `torch 2.11+cu128` is installed only for the system Python 3.13
   (`C:\Users\admin\AppData\Local\Programs\Python\Python313\python.exe`, or
   `py -3.13`). Use that interpreter to exercise the NN locator.
@@ -87,14 +90,13 @@ docker run --rm -p 8501:8501 dm-verifier
 
 ## Repo / git
 
-- Git repo, branch `master`, remote
+- Branch `master`, remote `origin` =
   `https://github.com/lopatin2012/VerificatorDataMatrix.git`.
 - `LICENSE` — MIT, Copyright (c) 2026 Maxim Lopatin (attribution required);
   keep it and the README license section on redistribution.
-- `samples/`, `models/`, `training/`, `docs/` are **`.gitignore`d** — a fresh
-  clone has none of them. The `samples` commands above and the NN fallback only
-  work on this machine's working copy; `docs/` (CRPT PDFs) must never be
-  committed.
+- `samples/`, `models/`, `training/`, `docs/` are **`.gitignore`d** — never
+  commit them (`docs/` CRPT PDFs in particular). A fresh clone has no samples,
+  so the sample commands above only work on this machine's working copy.
 
 ## Build / release
 
@@ -131,7 +133,8 @@ docker run --rm -p 8501:8501 dm-verifier
   history is lost on restart. Generated PDFs go to a temp dir
   (`PDF_DIR`), never under `webui/` (which is served statically). Responses
   get `Cache-Control: no-store` (added via `@app.after_request`) so browsers
-  pick up edited JS/CSS immediately. Start via `main.py --web`.
+  pick up edited JS/CSS immediately. Uploads are capped at 25 MB
+  (`app.config["MAX_CONTENT_LENGTH"]`). Start via `main.py --web`.
 - `report.py` — official PDF report (`build_pdf`), used by BOTH the web service
   and the GUI "Сформировать PDF отчёт" button (ui.py imports it too); also
   `build_history_pdf(entries, path)` for the history export. `visual.py` was
