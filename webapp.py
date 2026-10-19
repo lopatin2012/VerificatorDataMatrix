@@ -226,6 +226,29 @@ def api_history_csv():
         headers={"Content-Disposition": "attachment; filename=history.csv"})
 
 
+def _history_txt_lines():
+    """Decoded code contents, one per line, newest first.
+
+    Uses the copy-friendly form (no AI parens, real GS `\\x1d` separators)
+    and flattens any embedded newlines so one code stays on one line.
+    """
+    lines = []
+    for d in _export_rows():
+        text = d.get("content_plain") or d.get("content") or ""
+        text = text.replace("\r", " ").replace("\n", " ")
+        if text:
+            lines.append(text)
+    return lines
+
+
+@app.get("/api/history.txt")
+def api_history_txt():
+    body = "".join(line + "\r\n" for line in _history_txt_lines())
+    return Response(
+        body, content_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=history.txt"})
+
+
 @app.get("/api/history.pdf")
 def api_history_pdf():
     rows = _export_rows()

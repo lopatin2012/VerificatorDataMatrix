@@ -624,6 +624,8 @@ function wireControls() {
 function wireHistoryExports() {
   const csv = $("csvbtn");
   if (csv) csv.addEventListener("click", () => { window.location = "api/history.csv"; });
+  const txt = $("txtbtn");
+  if (txt) txt.addEventListener("click", () => { window.location = "api/history.txt"; });
   const pdf = $("hpdfbtn");
   if (pdf) pdf.addEventListener("click", () => { window.location = "api/history.pdf"; });
   const clear = $("clearhist");

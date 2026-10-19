@@ -1,249 +1,182 @@
 # AGENTS.md
 
-## Current state
-
-Python app for **GS1 DataMatrix verification** (ISO/IEC 15415-style grading,
-decode via zxing-cpp). Git repo on `master`; remote `origin` =
+Python app for **GS1 DataMatrix verification**: locate symbols in photos, decode
+with zxing-cpp, grade print quality ISO/IEC 15415-style, show results in a
+Tkinter GUI, a Flask web UI, or the CLI. All user-facing text (UI, CLI, PDF) is
+Russian. Branch `master`; remote `origin` =
 `https://github.com/lopatin2012/VerificatorDataMatrix.git`.
 
-Machine-local, gitignored data (present in this working copy, absent from a
-fresh clone):
-- `samples/` — reference-graded images `G0_*`…`G4_*` / `G_ERROR_*`; the
-  expanding calibration set lives in `samples/new_codes/`. `--dir samples`
-  works locally.
-- `models/` — NN locator weights (`dm_corners.pth`).
-- `training/` — NN training code (GPU; not required by the app).
-- `docs/` — CRPT reference PDFs (see the ЧЗ section); never commit them.
-- `test_image_codes/` — product-pack photos; not in this checkout, but
-  `.dockerignore` still excludes it. README's `--dir test_image_codes` only
-  works if that folder is present.
-
-Dotted and inverted (white-on-dark) symbols decode through a dedicated
-fallback (see `_dotted_results`); grading for them is coarse.
-
-## Known gaps / TODO
-
-- **Grade determination still needs work — this is the main remaining item.**
-  `core/grade.py` thresholds are approximate and do NOT reproduce the Axicon
-  reference. The `G0..G4` labels in the local sample filenames are the owner's
-  reference grades, not ours, and our overall class often differs. Calibration
-  needs a labeled set of real codes with reference grades (per parameter and
-  overall); the owner is collecting them. Until then, do not claim grade
-  accuracy.
-- **Read/no-read threshold for very poor codes.** Some codes the reference
-  treats as errors are still decoded here as class 0 (e.g. local sample
-  `samples/G_ERROR_9`, ex-`G0_1`). No rule marks such reads as errors yet.
-- **Local unreadable samples** (not in git): `samples/G0_5`, `samples/G1_1`,
-  `samples/G1_2`, `samples/G_ERROR_1`, `samples/G_ERROR_3` and
-  `samples/new_codes/G_ERROR_10` are not decoded by any path (only
-  `G_ERROR_3` reaches zxing, with a ChecksumError).
-- Dotted / white-on-dark grading is coarser than solid codes (see Gotchas).
-- Optional / unscheduled: persist web history (currently in-memory LRU); add
-  auth when `--web` is exposed beyond localhost (uploads are already capped at
-  25 MB via `MAX_CONTENT_LENGTH`).
-
-## Versioning
-
-`VERSION` lives in `version.py` (currently `1.0.31`), shown in the window title,
-CLI (`--version`) and PDF footer. Rules:
-
-- **Patch** (`1.0.x`): bump after every change to this `AGENTS.md` file.
-- **Minor** (`1.x.0`): bump when a single session has more than 30 user
-  requests.
-- **Major** (`2.0.0`): bump when a single session has more than 300 user
-  requests.
-
-When in doubt, follow semver order: patch < minor < major.
-
-## Environment
-
-- Core app runs in the repo venv: `.venv\Scripts\python.exe` (README claims
-  Python 3.13, but the venv on this machine is actually 3.11.9; core deps are
-  installed). It has **no torch**, so the NN locator is skipped there.
-- `torch 2.11+cu128` is installed only for the system Python 3.13
-  (`C:\Users\admin\AppData\Local\Programs\Python\Python313\python.exe`, or
-  `py -3.13`). Use that interpreter to exercise the NN locator.
-- Bare `python` on PATH is Python 3.14 **without pip** — do not use it.
-- Tests: `main.py --selftest` (self-contained smoke tests — GS1 validation and
-  synthetic solid/dotted/inverted decode). CI runs the same command
-  (`.github/workflows/ci.yml`). Still verify decode changes on real images.
-- Use `-X utf8` when piping Cyrillic output to files (console may mojibake).
+The working tree often carries uncommitted edits — run `git status` before
+assuming it is clean. `README.md` is the (Russian) user documentation; update it
+when user-facing behavior changes.
 
 ## Commands
 
+Always invoke the repo venv explicitly. Bare `python` is the system 3.14.5 with
+none of the app's deps — `README.md`'s claim that `python` resolves to the venv
+is wrong in this checkout.
+
 ```
-# GUI
-& .venv\Scripts\python.exe main.py --gui
-# analyze one image / a directory
-& .venv\Scripts\python.exe main.py --file samples/G4_1.jpg
-& .venv\Scripts\python.exe main.py --dir samples
-# web service (Flask + waitress)
-& .venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8000
-# built-in smoke tests (no sample files needed)
-& .venv\Scripts\python.exe main.py --selftest
-# Docker (repo-root Dockerfile runs the web service on :8501)
+# smoke tests — the ONLY test suite (no pytest/unittest); CI runs this
+.venv\Scripts\python.exe main.py --selftest
+
+# GUI (also the default when none of --file/--dir/--web is given)
+.venv\Scripts\python.exe main.py --gui
+
+# one image / a directory of images
+.venv\Scripts\python.exe main.py --file samples/G4_1.jpg
+.venv\Scripts\python.exe main.py --dir test_image_codes
+
+# web service (Flask app served by waitress)
+.venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8000
+
+# Docker image runs the web service on :8501 (not 8000)
 docker build -t dm-verifier .
 docker run --rm -p 8501:8501 dm-verifier
+
+# standalone Windows exe
+.venv\Scripts\python.exe -m pip install pyinstaller
+.\build.ps1
 ```
 
-`--um-per-px` sets the microns-per-pixel calibration (default 10.0).
+`--um-per-px` sets the calibration (default 10.0 µm/px). There is no lint,
+typecheck, formatter, or codegen config — don't invent one.
 
-## Repo / git
+## Environment and local data
 
-- Branch `master`, remote `origin` =
-  `https://github.com/lopatin2012/VerificatorDataMatrix.git`.
-- `LICENSE` — MIT, Copyright (c) 2026 Maxim Lopatin (attribution required);
-  keep it and the README license section on redistribution.
-- `samples/`, `models/`, `training/`, `docs/` are **`.gitignore`d** — never
-  commit them (`docs/` CRPT PDFs in particular). A fresh clone has no samples,
-  so the sample commands above only work on this machine's working copy.
+- Venv is Python 3.13.7 with core deps installed. No torch anywhere, so the NN
+  locator is skipped; to exercise it install `requirements-ml.txt` (CUDA wheel
+  index) first. Pin new libs only when Python 3.13 wheels exist.
+- `samples/`, `training/`, `models/`, `docs/` are `.gitignore`d and absent from
+  this checkout (the owner's calibration set grows under `samples/new_codes/`).
+  `docs/` holds CRPT API PDFs and must never be committed.
+- `test_image_codes/` has 12 real product-pack photos. It is UNTRACKED but not
+  `.gitignore`d, so a bare `git add .` stages it (only `.dockerignore` excludes
+  it). Use it for manual decode checks.
+- `webui/_report.pdf` is a stale 5.6 MB untracked leftover (current code writes
+  PDFs to a temp dir). Because `webui/` is served statically it is publicly
+  fetchable at `/_report.pdf`, and a bare `git add .` stages it — delete it.
+- Use `-X utf8` when piping Cyrillic output to files (console may mojibake).
+- `LICENSE` is MIT, Copyright (c) 2026 Maxim Lopatin; keep it and the README
+  license section.
 
-## Build / release
+## Testing
 
-- `build.spec` + `build.ps1` build a single-file Windows exe for end users
-  (`dist/DataMatrixVerifier.exe`) with PyInstaller, so they need no Python or
-  deps. It bundles `webui/` + `favicon.ico` and **excludes torch** (the NN
-  locator is skipped at runtime); `build/` and `dist/` are gitignored.
-- PyInstaller lives in the repo venv (not in `requirements.txt`):
-  `.venv\Scripts\python.exe -m pip install pyinstaller`, then `.\build.ps1`.
-- Releases are published on GitHub with `gh release create v<version>`
-  attaching the built exe; the tag matches `version.py`.
+`main.py --selftest` (`selftest.py`) is self-contained: GS1 parsing/validation
+plus synthetic solid, dotted, and inverted DataMatrix decode (8 checks). Real
+images are not in git, so still verify decode/geometry changes manually against
+`test_image_codes/` or the owner's `samples/`. CI
+(`.github/workflows/ci.yml`) runs the same command on Ubuntu after installing
+`libgl1`/`libglib2.0-0`.
 
 ## Architecture
 
-- `verifier.analyze_all(img)` is the entry point: decode + grid + grades + GS1
-  for **every** DataMatrix found in the frame (returns a list of `Result`).
-  `analyze(img)` returns the first one (or an error Result). Both the GUI and
-  web render all results and let the user switch between codes.
-- `ui.py` — Tkinter dashboard (scene with zoom/rotate/channel + heatmap,
-  gauge, defect cards, GS1 chips, PDF, history strip). Draws a "Код не найден"
-  banner on the scene when the current result has no symbol.
-- `webapp.py` + `webui/` — Flask/waitress web service (upload, camera,
-  heatmap drawn client-side, PDF download, history strip with CSV/PDF export).
-  When nothing is found `/api/analyze` still returns the `image` (plus
-  `error`), the client canvas draws a "Код не найден" banner on it, and the
-  gauge/params/defects/data panels are reset (no stale values from the
-  previous check).
-  REST: `/api/analyze` (returns `{image, results:[...]}` — one entry per code,
-  each with its own `result_id`), `/api/history`, `/api/history/clear` (POST),
-  `/api/result/<id>` (reload a past check), `/api/history.csv`,
-  `/api/history.pdf`, `/api/pdf`, `/api/version`. Each stored entry keeps
-  `{res, img, payload, thumb, ts}`. Results live in an in-memory LRU (50
-  entries), so a `result_id` (and its history entry) 404s once it ages out;
-  history is lost on restart. Generated PDFs go to a temp dir
-  (`PDF_DIR`), never under `webui/` (which is served statically). Responses
-  get `Cache-Control: no-store` (added via `@app.after_request`) so browsers
-  pick up edited JS/CSS immediately. Uploads are capped at 25 MB
-  (`app.config["MAX_CONTENT_LENGTH"]`). Start via `main.py --web`.
-- `report.py` — official PDF report (`build_pdf`), used by BOTH the web service
-  and the GUI "Сформировать PDF отчёт" button (ui.py imports it too); also
-  `build_history_pdf(entries, path)` for the history export. `visual.py` was
-  removed — UI and web draw their own overlays.
-- `verifier.problem_regions(res)` maps failed parameters to image-space
-  polygons used by the heatmap.
-- `core/decode.py` — `decode_all(img)` returns a DecodeResult per code found
-  (deduped by position). zxing-cpp decode (color image; use
-  `cvtColor(BGR2GRAY)`,
-  NOT `cv2.imread(..., IMREAD_GRAYSCALE)` which yields different pixel values
-  on this system and breaks zxing). Direct pass tries raw color, then
-  thresholded binarizations (some low-contrast codes only decode there).
-  Fallback: rebuild module grid + `is_pure`. Undecoded but located symbols are
-  kept (for grading) only if their L+timing pattern score is strong, their grid
-  is >= 8 modules per side and the quad passes the min-side/aspect checks — the
-  run-based locator can emit whole-frame / tiny (4x4) false positives.
-  A successful direct decode also supplies the exact module count: `_barcode_size`
-  reads it from `Barcode.to_image(scale=1)` (1 px/module; bbox of dark modules),
-  and `_symbol_for_quad(size_hint=...)` resamples at that count (trying small
-  quad scalings) so geometry is right. A wrong count can still decode (e.g. a
-  `20x4` grid for a 22x22 symbol), so the hint wins, and if the grid cannot
-  itself decode there (glare) the hinted geometry is still used.
-- Dotted / white-on-dark codes: `_dotted_results` (runs only when nothing
-  decoded) closes the dot mask with a small elliptical kernel, lets zxing find
-  the symbol, then rebuilds the grid from the zxing quad by warping
-  `255 - closed` to a square and resampling N×N (`_DOT_MODULE_SIZES`, 10..32).
-  N is chosen from the symbol's own dot pitch (`_dot_pitch`, FFT of the warped
-  mask, both axes must agree) rather than the first size whose grid pure-decodes
-  — a wrong count can still decode (e.g. 32 for a 20x20 dot code). A symbol with
-  no consistent pitch (e.g. a photo of a screen with moiré) is rejected as a
-  false positive. If the full-frame pass detects no symbol at all, the code is
-  likely small, so `_dotted_tiles` retries on overlapping 2x2 crops with a
-  local (crop) Otsu threshold — the global threshold loses these. Tile hits use
-  a relaxed rebuild (`_symbol_from_dotted_tile`) that trusts zxing's text and
-  picks the best-fitting module count. Tiles run only when the full-frame pass
-  detected nothing, so screen/moire photos (which it does detect, then rejects)
-  are not re-admitted. Symbol reflectance is inverted so `grade.py`'s
+- `main.py` — argparse entry: GUI, web, CLI, selftest. Defaults to GUI.
+- `verifier.analyze_all(img)` is the pipeline entry: decode + grid + grades +
+  GS1 for **every** symbol, returning a list of `Result` sorted best-first
+  (decoded/higher grade first); `analyze(img)` returns the first or an error
+  Result. `to_dict()` is the JSON shape; `score_of`, `is_good`,
+  `plain_content`, and `problem_regions` live here too.
+- `core/decode.py` — `decode_all` returns one `DecodeResult` per symbol,
+  deduped by quad. zxing gets an RGB image, and gray comes from
+  `cvtColor(BGR2GRAY)` — **never** `cv2.imread(..., IMREAD_GRAYSCALE)`, which
+  yields different pixels on this machine and breaks zxing. Tries raw color,
+  then thresholded passes (96/128/160/192), then grid rebuild + `is_pure`.
+  Undecoded but located symbols are kept for grading only if the quad is
+  plausible (>= 8 modules/side, >= 24 px, aspect <= 5, <= 80% of frame) and the
+  L+timing pattern score is strong — the run-based locator emits whole-frame
+  and tiny (4x4) false positives.
+- The zxing decode supplies the authoritative module count: `_barcode_size`
+  reads it from `Barcode.to_image(scale=1)` and passes it as `size_hint`
+  through `_symbol_for_quad`; a wrong grid can still decode (e.g. 20x4 for a
+  22x22 symbol), so the hint wins. Without a hint, `_candidate_sizes` tries the
+  auto-detected count and nearby even sizes, then 20x20/22x22 (samples are
+  mostly those).
+- Dotted / white-on-dark fallback (`_dotted_results`, only when nothing
+  decoded): morphological close, zxing locate, warp `255 - closed`, resample
+  N×N where N comes from the symbol's dot pitch (`_dot_pitch` FFT, both axes
+  must agree) rather than the first size that pure-decodes. Rejecting an
+  inconsistent pitch keeps screen/moiré photos from becoming false positives.
+  If full-frame detection found nothing at all, `_dotted_tiles` retries 2x2
+  crops with local Otsu. Symbol reflectance is inverted so `grade.py`'s
   "dark module = low reflectance" assumption holds.
-- `core/detect.py` — L-pattern locator (zxing positions, plus a run-based
-  locator for images zxing misses) and grid extraction via perspective warp.
-  Handles inverted codes (white-on-dark) by trying both polarities.
-- `core/nn_locator.py` — optional neural-net locator (ResNet18 corner
-  regression, trained on `shortery/dm-codes`). Lazy `from . import nn_locator`
-  in `decode.py`; if torch is missing the ImportError is caught and the
-  locator is skipped silently. Last-resort fallback: NN crop → classic decode.
-  Model weights in `models/dm_corners.pth` (gitignored). Training code in
-  `training/` (gitignored; GPU; ML deps in `requirements-ml.txt`, NOT required).
-- Sample codes are mostly **20x20 or 22x22**, but `_candidate_sizes` tries the
-  exact count reported by zxing (`_barcode_size`) first, then the auto-detected
-  module count (and nearby even sizes), then 20x20/22x22. A wrong grid size can
-  still decode, so the zxing size hint is authoritative; without one, decode
-  success of the reconstructed grid is the confirmation.
-- `core/grade.py` — parameter grades 0–4; thresholds are lenient to match the
-  reference output ("48% contrast → grade 4"). Parameter names follow the
-  Axicon reference (Размерность печати, Левая/Нижняя часть шаблона "L",
-  Последовательность тактовых модулей, Запас коррекции ошибок, ...).
-- `gs1.py` — parses AIs from raw bytes (`\x1d` = GS separator, skipped between
-  fields) or HRI text. `gs1.validate(elements)` returns warnings (unknown AI,
-  fixed-length mismatch, GTIN/SSCC mod-10 check digit), surfaced as
-  `Result.gs1_warnings` and `to_dict()["gs1_warnings"]`.
-- Content copy preserves the GS separator `\x1d` (only FS `\x1c`/RS `\x1e` are
-  stripped): `verifier.plain_content()` → `content_raw`; the web REST
-  `content_plain` field carries the same raw form; both the GUI and web copy
-  buttons put the raw `\x1d` on the clipboard and only the on-screen preview
-  substitutes a visible `[GS]` marker. `\x1d` is the standard GS1 field
-  separator needed to re-parse variable-length AIs, so don't strip it in copy
-  paths.
+- `core/detect.py` — L-pattern locator (zxing positions + run-based fallback)
+  and perspective-warp grid extraction; tries both polarities.
+- `core/nn_locator.py` — optional ResNet18 corner regressor, lazy `torch`
+  import; missing torch is silently ignored. Last-resort crop-then-decode.
+- `core/grade.py` — parameter grades 0–4, overall = minimum. Thresholds are
+  approximate (see Known gaps). Parameter names are exact Russian strings that
+  `problem_regions` and the UI match; renaming one silently breaks the heatmap.
+- `gs1.py` — parses AIs from raw bytes or HRI; `validate()` returns warnings
+  (unknown AI, fixed-length mismatch, GTIN/SSCC mod-10), surfaced as
+  `Result.gs1_warnings`.
+- Copy paths preserve the GS separator `\x1d` (only FS `\x1c`/RS `\x1e` are
+  stripped): `plain_content()` feeds `content_raw`/`content_plain`. GUI and web
+  copy the raw string and only render `[GS]` on screen. Don't strip `\x1d` —
+  it is required to re-parse variable-length AIs.
+- `webapp.py` + `webui/` — Flask/waitress. REST: `/api/analyze` (returns
+  `{image, results:[...]}`, one `result_id` per code; with no code it still
+  returns `image` plus `error`), `/api/history`, `/api/history/clear`,
+  `/api/result/<id>`, `/api/history.csv`, `/api/history.txt`,
+  `/api/history.pdf`, `/api/pdf`, `/api/version`. Entries are an in-memory
+  LRU of 50 (`{res, img, payload, thumb, ts}`), so ids 404 once evicted and
+  history dies with the process. `history.txt` is one decoded code per line
+  (`content_plain`, real GS separators, CRLF); undecoded entries are skipped.
+  Upload cap is 25 MB (`MAX_CONTENT_LENGTH`). PDFs go to `PDF_DIR` (a temp
+  dir), never `webui/`. `@app.after_request` sets `Cache-Control: no-store`.
+- `report.py` — `build_pdf` is used by both the web service and the GUI button;
+  `build_history_pdf` builds the history export. `ui.py` draws its own overlays
+  and shows a "Код не найден" banner; its "Экспорт TXT" button writes
+  `scan_log` (all decoded contents this session, consecutive duplicates
+  collapsed) as UTF-8 CRLF, one code per line.
+
+## Versioning
+
+`VERSION` in `version.py` (currently `1.0.33`) appears in the window title, CLI
+`--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
+edit, **minor** after a session with >30 user requests, **major** after >300.
+`version.py` must be bumped alongside.
+
+## Build and release
+
+`build.spec` + `build.ps1` produce a single-file
+`dist/DataMatrixVerifier.exe` (GUI/CLI/web in one). The spec bundles `webui/`
+and `favicon.ico` and excludes torch; `build/` and `dist/` are gitignored.
+Releases are published with `gh release create v<version>` attaching the exe;
+the tag must match `version.py`. Docker builds the web service only.
+
+## Known gaps
+
+- **Grade determination is the main remaining item.** `core/grade.py` is not
+  calibrated to the Axicon reference; local `G0..G4` filename labels are the
+  owner's reference grades, and our class often differs. Until a labeled
+  calibration set exists, do not claim grade accuracy.
+- No rule yet forces a read to be an error for very poor codes; e.g. local
+  `samples/G_ERROR_9` still decodes here as class 0.
+- Local samples `G0_5`, `G1_1`, `G1_2`, `G_ERROR_1`, `G_ERROR_3` and
+  `samples/new_codes/G_ERROR_10` decode via no path (only `G_ERROR_3` reaches
+  zxing, with a ChecksumError).
+- Web history is in-memory only; `--web` has no auth (localhost by default).
 
 ## Gotchas
 
-- Don't pin new libraries without checking Python 3.13 wheels (reportlab is
-  already installed for the PDF report).
-- The web server holds code in memory — waitress has NO auto-reload. After
-  editing `.py`/`webui/`, the running process keeps serving the OLD code until
-  restarted. A leftover server started earlier (even by another agent/session)
-  can sit unnoticed on port 8000 and report a stale `/api/version`; check
-  `Get-NetTCPConnection -LocalPort 8000` before debugging "changes don't
-  apply".
-- `cv2.imread` fails on paths with Cyrillic characters (Windows path encoding).
-  The web service is fine (it decodes upload bytes via `imdecode`); the CLI and
-  GUI use `verifier.imread_unicode` (`np.fromfile` + `cv2.imdecode`) instead.
-- Dotted / white-on-dark codes decode only through `_dotted_results`, which is
-  slower (~1 s/code, several s more when `_dotted_tiles` runs) and runs after
-  the normal pipeline fails. Grading for them is coarse (reflectance is
-  inverted). Codes photographed on dark backgrounds
-  or with strong perspective (e.g. product packs) may still fail — the
-  run-based L-locator can produce whole-frame / sub-pixel sliver false
-  positives, which `decode_all` filters by min-side/aspect/pattern-score.
-- Grading is approximate, not calibrated to the Axicon reference tool.
+- waitress has NO auto-reload: after editing `.py` or `webui/`, the old process
+  keeps serving old code. A leftover server (possibly from another session) can
+  sit on port 8000 and report a stale `/api/version`; check
+  `Get-NetTCPConnection -LocalPort 8000` before debugging "changes don't apply".
+- `cv2.imread` fails on Cyrillic paths; the CLI/GUI use
+  `verifier.imread_unicode` (`np.fromfile` + `imdecode`). Uploads are fine.
+- Dotted/inverted decode runs only after normal decode fails, costs ~1 s per
+  code (more when tiles run), and grades coarsely; product packs / dark
+  backgrounds / strong perspective may still fail.
+- `webui/` is served statically, so never write generated artifacts there.
 
-## Chestny Znak (ЧЗ) — offline only
+## Chestny Znak (ЧЗ) — offline by design
 
-The app is deliberately **fully offline**; it never calls ЧЗ. Decision made
-after reading `docs/True_API_GIS_MT.pdf` and `docs/API_СУЗ_3.0.pdf` (gitignored,
-not in git):
-
-- There is **no token-free method** to get product info by DataMatrix code.
-  Product/code lookups all require a Bearer token:
-  `POST /api/v3/true-api/cises/info`, `POST /cises/short/list`, `/cises/list`,
-  and by-GTIN `POST /api/v4/true-api/product/info` — examples all send
-  `Authorization: Bearer <ТОКЕН>`. "Публичный" in the docs means "any
-  authenticated participant", not anonymous.
-- Genuinely `без токена` are only `GET /participants?inns=...` and
-  `GET /api/v4/true-api/edo/inn/{inn}` — neither returns product info.
-- The token comes from a УКЭП (`/auth/key` → `/auth/simpleSignIn`), i.e. a
-  participant account is required.
-- Stands: `https://markirovka.crpt.ru/api/v3/true-api` (and `/v4/true-api`);
-  sandbox `https://markirovka.sandbox.crptech.ru/...`. `API_СУЗ` is
-  СУЗ-ОБЛАКО (orders/emission), no consumer lookup either.
-
-If a "Сведения в ЧЗ" feature is ever wanted, it must be token-based (network +
-participant credentials), so it is opt-in and never on by default.
+The app deliberately never calls ЧЗ; no integration should be added casually.
+From `docs/` (gitignored): there is **no token-free way** to look up product
+info by DataMatrix code — `/cises/info`, `/cises/list`, `/product/info` all need
+`Authorization: Bearer <token>`, and the token requires a participant account.
+Only `/participants?inns=...` and `/edo/inn/{inn}` are token-free and return no
+product data. If such a feature is ever wanted it must be opt-in, require
+credentials/network, and never be on by default.

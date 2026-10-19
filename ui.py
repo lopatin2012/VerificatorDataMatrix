@@ -133,6 +133,7 @@ class VerifierApp:
         self.show_overlay = True
         self.history = []
         self.history_photos = []
+        self.scan_log = []
 
         self._style = ttk.Style()
         self._style.theme_use("clam")
@@ -356,6 +357,8 @@ class VerifierApp:
         self.history_status = tk.StringVar(value="Проанализировано: 0 кодов")
         tk.Label(bottom, textvariable=self.history_status, font=("Segoe UI", 9),
                  fg="#455a64", bg="#eef1f5").pack(side=tk.RIGHT)
+        ttk.Button(bottom, text="Экспорт TXT",
+                   command=self._export_txt).pack(side=tk.RIGHT, padx=8)
 
     # ------------------------------------------------------------ io
 
@@ -683,6 +686,26 @@ class VerifierApp:
         build_pdf(self.result, self.frame_bgr, path)
         self._set_verdict("PDF сохранён", "#2e7d32", os.path.basename(path))
 
+    def _export_txt(self):
+        if not self.scan_log:
+            self._set_verdict("Нет данных", "#c62828",
+                              "Сначала проанализируйте код")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".txt", initialfile="codes.txt",
+            filetypes=[("Текст", "*.txt")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8", newline="\r\n") as f:
+                f.write("\n".join(self.scan_log) + "\n")
+        except OSError as exc:
+            self._set_verdict("Ошибка записи", "#c62828", str(exc))
+            return
+        self._set_verdict(
+            "TXT сохранён", "#2e7d32",
+            f"{os.path.basename(path)} — {len(self.scan_log)} кодов")
+
     def _copy(self, text):
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
@@ -705,6 +728,12 @@ class VerifierApp:
         self.history.append(entry)
         if len(self.history) > 12:
             self.history.pop(0)
+        if not res.error and res.symbol is not None:
+            text = plain_content(res).replace("\r", " ").replace("\n", " ")
+            # Camera mode re-analyzes the same code many times; keep one entry
+            # per uninterrupted run of identical reads.
+            if text and (not self.scan_log or self.scan_log[-1] != text):
+                self.scan_log.append(text)
         self._render_history()
 
     def _make_thumbnail(self, bgr, res, good):
@@ -741,7 +770,7 @@ class VerifierApp:
         self.regions = problem_regions(e["res"])
         self.zoom = 1.0
         self.focus_index = None
-        self._render()
+        self._render(update_history=False)
 
     # ----------------------------------------------------------- scene
 
