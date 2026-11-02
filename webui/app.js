@@ -20,6 +20,62 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+const PROCESS_TIPS = [
+  "Проверка в Честном Знаке выполняется только по кнопке — автоматически код никуда не отправляется.",
+  "Для ЧЗ нужен интернет и доступ к mobile.api.crpt.ru; вне РФ сервис может быть недоступен.",
+  "В ЧЗ отправляется полный код маркировки, включая криптохвост (AI 91/92/93).",
+  "«Найден, проверка не пройдена» означает, что код есть в ГИС МТ, но криптохвост не подтверждён.",
+  "Без интернета проверка качества, отчёт и экспорт работают как обычно.",
+  "Сначала декодируйте код, затем откройте вкладку «Товар» и нажмите «Проверить в ЧЗ».",
+];
+let _progressTipTimer = null;
+let _progressTipIndex = 0;
+
+function startProgress(title) {
+  const box = $("progress");
+  if (!box) return;
+  box.hidden = false;
+  $("progresstitle").textContent = title || "Обработка...";
+  $("progresspct").textContent = "0%";
+  const fill = $("progressfill");
+  fill.classList.remove("indeterminate");
+  fill.style.width = "0%";
+  _progressTipIndex = 0;
+  $("progresstip").textContent = PROCESS_TIPS[0];
+  if (_progressTipTimer) clearInterval(_progressTipTimer);
+  _progressTipTimer = setInterval(() => {
+    _progressTipIndex = (_progressTipIndex + 1) % PROCESS_TIPS.length;
+    $("progresstip").textContent = PROCESS_TIPS[_progressTipIndex];
+  }, 3500);
+}
+
+function setProgress(pct, title) {
+  const fill = $("progressfill");
+  if (!fill) return;
+  fill.classList.remove("indeterminate");
+  fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  $("progresspct").textContent = Math.round(pct) + "%";
+  if (title) $("progresstitle").textContent = title;
+}
+
+function indeterminateProgress(title) {
+  const fill = $("progressfill");
+  if (!fill) return;
+  fill.classList.add("indeterminate");
+  fill.style.width = "";
+  $("progresspct").textContent = "…";
+  if (title) $("progresstitle").textContent = title;
+}
+
+function stopProgress() {
+  const box = $("progress");
+  if (box) box.hidden = true;
+  if (_progressTipTimer) {
+    clearInterval(_progressTipTimer);
+    _progressTipTimer = null;
+  }
+}
+
 function copyText(text) {
   if (navigator.clipboard && window.isSecureContext) {
     return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopy(text));
@@ -737,7 +793,7 @@ function setImage(dataUrl) {
   img.src = dataUrl;
 }
 
-async function analyze(file) {
+function analyze(file) {
   if (window.__stopCamera) window.__stopCamera();
   const fd = new FormData();
   fd.append("image", file);
@@ -747,21 +803,41 @@ async function analyze(file) {
   if (um) fd.append("um_per_px", um.replace(",", "."));
   $("validation").textContent = "Анализ...";
   $("validation").style.color = "#f9a825";
-  try {
-    const resp = await fetch("api/analyze", { method: "POST", body: fd });
-    const data = await resp.json();
+  startProgress("Загрузка изображения...");
+
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "api/analyze");
+  xhr.timeout = 120000;
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    setProgress(e.loaded / e.total * 60, "Загрузка изображения...");
+  };
+  xhr.upload.onload = () => indeterminateProgress("Анализ изображения...");
+  xhr.onload = () => {
+    stopProgress();
+    let data = {};
+    try { data = JSON.parse(xhr.responseText || "{}"); } catch (e) { data = {}; }
     if (!data.image) {
-      $("validation").textContent = data.error || "Ошибка анализа";
+      $("validation").textContent =
+        data.error || ("Ошибка анализа (HTTP " + xhr.status + ")");
       $("validation").style.color = "#c62828";
       return;
     }
     setImage(data.image);
     render(data);
     loadHistory();
-  } catch (e) {
-    $("validation").textContent = "Ошибка сети: " + e;
+  };
+  xhr.onerror = () => {
+    stopProgress();
+    $("validation").textContent = "Ошибка сети";
     $("validation").style.color = "#c62828";
-  }
+  };
+  xhr.ontimeout = () => {
+    stopProgress();
+    $("validation").textContent = "Превышено время анализа";
+    $("validation").style.color = "#c62828";
+  };
+  xhr.send(fd);
 }
 
 // ------------------------------------------------------------- input
@@ -866,6 +942,8 @@ async function reanalyzeCurrent() {
   const um = ($("umpp").value || "").trim();
   $("validation").textContent = "Пересчёт с калибровкой...";
   $("validation").style.color = "#f9a825";
+  startProgress("Пересчёт с новой калибровкой...");
+  indeterminateProgress("Пересчёт с новой калибровкой...");
   try {
     const resp = await fetch("api/reanalyze", {
       method: "POST",
@@ -874,21 +952,28 @@ async function reanalyzeCurrent() {
     });
     const data = await resp.json();
     if (!resp.ok) {
+      stopProgress();
       $("validation").textContent = data.error || "Ошибка пересчёта";
       $("validation").style.color = "#c62828";
       return;
     }
     if (!data.image) {
+      stopProgress();
       $("validation").textContent = data.error || "Код не найден";
       $("validation").style.color = "#c62828";
       return;
     }
     const now = state.results[state.current];
-    if (!now || now.result_id !== rid) return;
+    if (!now || now.result_id !== rid) {
+      stopProgress();
+      return;
+    }
+    stopProgress();
     setImage(data.image);
     render(data);
     loadHistory();
   } catch (e) {
+    stopProgress();
     $("validation").textContent = "Ошибка сети: " + e;
     $("validation").style.color = "#c62828";
   }

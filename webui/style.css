@@ -186,6 +186,52 @@ main {
   background: #0f172a;
 }
 #video[hidden] { display: none; }
+
+.progress {
+  position: absolute; inset: 0; z-index: 6;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, .62);
+  backdrop-filter: blur(3px);
+}
+.progressbox {
+  width: min(440px, 100%);
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 70px -20px rgba(0, 0, 0, .7);
+}
+.progresshead {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 13px; font-weight: 700; color: var(--ink);
+  margin-bottom: 9px;
+}
+.progresspct { color: var(--accent); }
+.progressbar {
+  height: 8px; border-radius: 999px; overflow: hidden;
+  background: #e8edf5;
+}
+.progressfill {
+  height: 100%; width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #7c3aed);
+  transition: width .2s ease;
+}
+.progressfill.indeterminate {
+  width: 40%;
+  animation: progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(260%); }
+}
+.progresstip {
+  margin-top: 10px;
+  min-height: 32px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+}
 #dropmsg {
   position: absolute; inset: 0; z-index: 2;
   display: flex; flex-direction: column;
@@ -508,6 +554,27 @@ main {
 
 .toolbar { margin-bottom: 6px; }
 .hint { font-size: 11px; line-height: 1.45; color: var(--muted); margin-bottom: 8px; }
+.help {
+  margin: 0 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--card-2);
+  font-size: 11px;
+}
+.help summary {
+  cursor: pointer;
+  padding: 7px 9px;
+  font-weight: 600;
+  color: var(--accent);
+  user-select: none;
+}
+.help ul {
+  margin: 0;
+  padding: 0 12px 9px 26px;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+.help li { margin: 3px 0; }
 .crptstatus { font-size: 13px; font-weight: 700; margin: 4px 0 8px; }
 .crptinfo { display: flex; flex-direction: column; }
 .crptrow {

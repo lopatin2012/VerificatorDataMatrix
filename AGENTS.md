@@ -199,7 +199,10 @@ in git, so still verify decode/geometry changes manually against
   selectors together. Camera is open-then-capture (first click previews,
   second captures); tabs are wired by `data-tab`. Scene navigation: drag to
   pan, wheel to zoom at the cursor, Reset view, and fullscreen on the `.scene`
-  card (`state.panX/panY` drive both drawImage and the overlay mapping). On wide screens the page is
+  card (`state.panX/panY` drive both drawImage and the overlay mapping).
+  `analyze` uses XHR for a real upload percentage, then an indeterminate bar;
+  `PROCESS_TIPS` rotates Честный Знак hints, and the Товар tab has a `<details>`
+  help block. There is no server-side stage stream. On wide screens the page is
   `100vh` with no body scroll; the health/diag cards scroll internally. At
   <=1300px it becomes a single scrolling column on purpose. Calibration changes
   (manual field or the X-dim dialog) call `/api/reanalyze` on the current result
@@ -214,7 +217,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.45`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.46`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.

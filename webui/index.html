@@ -32,6 +32,16 @@
         <input type="file" id="file" accept="image/*" hidden>
         <canvas id="scene" width="800" height="600"></canvas>
         <video id="video" autoplay playsinline hidden></video>
+        <div id="progress" class="progress" hidden>
+          <div class="progressbox">
+            <div class="progresshead">
+              <span id="progresstitle">Обработка...</span>
+              <span id="progresspct" class="progresspct"></span>
+            </div>
+            <div class="progressbar"><div id="progressfill" class="progressfill"></div></div>
+            <div id="progresstip" class="progresstip"></div>
+          </div>
+        </div>
         <div id="dropmsg">
           <div class="dropicon">⇪</div>
           <h2>Перетащите изображение</h2>
@@ -132,6 +142,21 @@
             </div>
             <div class="hint">Запрос выполняется только по кнопке; код
               отправляется в mobile.api.crpt.ru.</div>
+            <details class="help">
+              <summary>Как работать с Честным Знаком</summary>
+              <ul>
+                <li>Проверка выполняется только по кнопке — автоматически
+                  код никуда не отправляется.</li>
+                <li>Нужен интернет и доступ к mobile.api.crpt.ru; вне РФ
+                  сервис может быть недоступен.</li>
+                <li>Для проверки нужен полный код маркировки, включая
+                  криптохвост (AI 91/92/93).</li>
+                <li>«Найден, проверка не пройдена» — код есть в ГИС МТ, но
+                  криптохвост не подтверждён.</li>
+                <li>Сведения информационные и не являются официальным
+                  подтверждением подлинности.</li>
+              </ul>
+            </details>
             <div id="crptstatus" class="crptstatus muted">Не проверено</div>
             <div id="crptinfo" class="crptinfo"></div>
           </div>
