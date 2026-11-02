@@ -6,6 +6,8 @@ const state = {
   current: 0,
   img: null,           // Image object of the base frame
   zoom: 1,
+  panX: 0,
+  panY: 0,
   rotate: 0,
   channel: "color",
   focus: null,
@@ -13,6 +15,7 @@ const state = {
   showOverlay: true,
   crptCode: null,
   calibration: "",
+  suppressClick: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -137,9 +140,16 @@ function drawScene() {
   let localW = fitW, localH = fitH;
   if (rot % 2) { localW = fitH; localH = fitW; }
 
+  const maxPanX = Math.max(0, (localW - cw) / 2);
+  const maxPanY = Math.max(0, (localH - ch) / 2);
+  state.panX = Math.max(-maxPanX, Math.min(maxPanX, state.panX));
+  state.panY = Math.max(-maxPanY, Math.min(maxPanY, state.panY));
+  const originX = cw / 2 + state.panX;
+  const originY = ch / 2 + state.panY;
+
   ctx.clearRect(0, 0, cw, ch);
   ctx.save();
-  ctx.translate(cw / 2, ch / 2);
+  ctx.translate(originX, originY);
   if (rot) ctx.rotate(rot * Math.PI / 2);
 
   // a soft matte shadow makes the photo read as a placed sheet on the scene
@@ -168,7 +178,7 @@ function drawScene() {
       case 2: rx = -lx; ry = -ly; break;
       default: rx = ly; ry = -lx; break;
     }
-    return [cw / 2 + rx, ch / 2 + ry];
+    return [originX + rx, originY + ry];
   };
 
   // symbol outlines + heatmap for every detected code
@@ -214,6 +224,7 @@ function drawScene() {
   }
 
   // Nothing decoded -> say it right on the image so it is not missed.
+  // (kept centered on the canvas; the image may be panned away)
   const hasCode = (state.results || []).some((r) => r.corners);
   if (!hasCode) {
     const text = "Код не найден";
@@ -227,6 +238,24 @@ function drawScene() {
     ctx.fillStyle = "#ff5252";
     ctx.fillText(text, cw / 2, ch / 2);
   }
+}
+
+function zoomAt(anchorX, anchorY, factor) {
+  const next = Math.max(0.5, Math.min(4, state.zoom * factor));
+  if (Math.abs(next - state.zoom) < 1e-4) return;
+  const k = next / state.zoom;
+  state.panX = anchorX - (anchorX - state.panX) * k;
+  state.panY = anchorY - (anchorY - state.panY) * k;
+  state.zoom = next;
+  drawScene();
+}
+
+function resetView() {
+  state.zoom = 1;
+  state.panX = 0;
+  state.panY = 0;
+  state.rotate = 0;
+  drawScene();
 }
 
 // ------------------------------------------------------------- rendering
@@ -686,7 +715,16 @@ async function loadResult(rid) {
 
 function setImage(dataUrl) {
   const img = new Image();
-  img.onload = () => { state.img = img; $("dropmsg").hidden = true; drawScene(); };
+  img.onload = () => {
+    state.img = img;
+    state.zoom = 1;
+    state.panX = 0;
+    state.panY = 0;
+    state.rotate = 0;
+    $("dropmsg").hidden = true;
+    $("dropzone").classList.add("has-image");
+    drawScene();
+  };
   img.src = dataUrl;
 }
 
@@ -730,6 +768,10 @@ function wireDropzone() {
     });
   }
   dz.addEventListener("click", (e) => {
+    if (state.suppressClick) {
+      state.suppressClick = false;
+      return;
+    }
     if (e.target.tagName === "BUTTON" || e.target.tagName === "VIDEO") return;
     file.click();
   });
@@ -978,10 +1020,97 @@ function wireTabs() {
   activateTab("tab-data");
 }
 
+function wireSceneNavigation() {
+  const dz = $("dropzone");
+  const canvas = $("scene");
+  let dragging = false;
+  let pointerId = null;
+  let lastX = 0;
+  let lastY = 0;
+  let moved = 0;
+
+  dz.addEventListener("pointerdown", (e) => {
+    if (!state.img || e.button !== 0) return;
+    if (e.target.tagName === "VIDEO") return;
+    if (e.target.closest && e.target.closest("button")) return;
+    dragging = true;
+    pointerId = e.pointerId;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    moved = 0;
+    state.suppressClick = false;
+    dz.classList.add("dragging");
+    if (dz.setPointerCapture) {
+      try { dz.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    }
+  });
+
+  dz.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    moved += Math.abs(dx) + Math.abs(dy);
+    if (moved > 3) {
+      state.suppressClick = true;
+      state.panX += dx;
+      state.panY += dy;
+      drawScene();
+    }
+  });
+
+  function stopDrag() {
+    if (!dragging) return;
+    dragging = false;
+    dz.classList.remove("dragging");
+    if (pointerId !== null && dz.releasePointerCapture) {
+      try { dz.releasePointerCapture(pointerId); } catch (err) { /* ignore */ }
+    }
+    pointerId = null;
+  }
+  dz.addEventListener("pointerup", stopDrag);
+  dz.addEventListener("pointercancel", stopDrag);
+  dz.addEventListener("pointerleave", stopDrag);
+
+  dz.addEventListener("wheel", (e) => {
+    if (!state.img) return;
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const ax = e.clientX - rect.left - canvas.clientWidth / 2;
+    const ay = e.clientY - rect.top - canvas.clientHeight / 2;
+    zoomAt(ax, ay, Math.exp(-e.deltaY * 0.0015));
+  }, { passive: false });
+
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => drawScene()).observe(dz);
+  } else {
+    window.addEventListener("resize", drawScene);
+  }
+}
+
 function wireControls() {
-  $("zoomin").addEventListener("click", () => { state.zoom = Math.min(4, state.zoom + 0.25); drawScene(); });
-  $("zoomout").addEventListener("click", () => { state.zoom = Math.max(0.5, state.zoom - 0.25); drawScene(); });
-  $("rotate").addEventListener("click", () => { state.rotate++; drawScene(); });
+  $("zoomin").addEventListener("click", () => zoomAt(0, 0, 1.25));
+  $("zoomout").addEventListener("click", () => zoomAt(0, 0, 0.8));
+  $("rotate").addEventListener("click", () => {
+    state.rotate = (state.rotate + 1) % 4;
+    state.panX = 0;
+    state.panY = 0;
+    drawScene();
+  });
+  $("resetview").addEventListener("click", resetView);
+  $("fullscreen").addEventListener("click", async () => {
+    const scene = document.querySelector(".scene");
+    try {
+      if (!document.fullscreenElement) await scene.requestFullscreen();
+      else await document.exitFullscreen();
+    } catch (e) { /* browsers may deny */ }
+  });
+  document.addEventListener("fullscreenchange", () => {
+    $("fullscreen").textContent = document.fullscreenElement
+      ? "⛶ Выйти" : "⛶ На весь экран";
+    requestAnimationFrame(() => requestAnimationFrame(drawScene));
+  });
   $("channel").addEventListener("change", (e) => { state.channel = e.target.value; drawScene(); });
   var overlayToggle = $("overlaytoggle");
   if (overlayToggle) {
@@ -1046,6 +1175,7 @@ wireCalibration();
 wireCalibDialog();
 wireCrpt();
 wireTabs();
+wireSceneNavigation();
 wireControls();
 wireHistoryExports();
 initEmptyState();

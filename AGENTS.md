@@ -61,7 +61,7 @@ typecheck, formatter, or codegen config — don't invent one.
 
 `main.py --selftest` (`selftest.py`) is self-contained: GS1 parsing/validation
 (including GS-separated variable fields and dates) plus synthetic solid, dotted,
-and inverted DataMatrix decode and geometry/grading regressions (43 checks). It
+and inverted DataMatrix decode and geometry/grading regressions (44 checks). It
 asserts that dimensions are reported in source microns, that a rectangular
 ECC200 symbol (12x26) is not penalised for its aspect ratio, that the default
 calibration is flagged, that report values use a decimal comma, that
@@ -149,8 +149,9 @@ in git, so still verify decode/geometry changes manually against
   used by the code; `Param.scale` feeds the PDF/CLI/web reports (do not
   replace them with ISO numbers unless the grades themselves are recalibrated).
   `grade_symbol(..., uec=...)` uses zxing's UEC ratio when present and only
-  falls back to `SC-20` for grid/dotted paths. Use
-  `tools/evaluate_grades.py` before changing thresholds.
+  falls back to `SC-20` for grid/dotted paths. Symbol contrast now uses the
+  ISO-oriented bands `70/55/40/20`; the remaining parameters are still
+  approximate. Use `tools/evaluate_grades.py` before changing more thresholds.
 - `gs1.py` — parses AIs from raw bytes or HRI; a GS/FNC1 separator is
   authoritative for variable-length fields. Supports pattern AIs (310n–316n,
   390n–395n). `validate()` returns warnings (unknown AI, fixed-length mismatch,
@@ -194,7 +195,9 @@ in git, so still verify decode/geometry changes manually against
   health card with measurement rows, and tabs `Данные / Товар / Дефекты /
   Отчёт`; history strip with time. Keep JS IDs stable or update `app.js`
   selectors together. Camera is open-then-capture (first click previews,
-  second captures); tabs are wired by `data-tab`. On wide screens the page is
+  second captures); tabs are wired by `data-tab`. Scene navigation: drag to
+  pan, wheel to zoom at the cursor, Reset view, and fullscreen on the `.scene`
+  card (`state.panX/panY` drive both drawImage and the overlay mapping). On wide screens the page is
   `100vh` with no body scroll; the health/diag cards scroll internally. At
   <=1300px it becomes a single scrolling column on purpose. Calibration changes
   (manual field or the X-dim dialog) call `/api/reanalyze` on the current result
@@ -209,7 +212,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.43`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.44`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.

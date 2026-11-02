@@ -166,6 +166,7 @@ main {
   background:
     radial-gradient(circle at 50% 42%, #1e293b 0%, #0f172a 68%);
   cursor: pointer;
+  touch-action: none;
   transition: border-color .18s ease, background .18s ease;
 }
 .dropzone.over {
@@ -173,6 +174,8 @@ main {
   background:
     radial-gradient(circle at 50% 42%, #312e81 0%, #111827 68%);
 }
+.dropzone.has-image { cursor: grab; }
+.dropzone.dragging { cursor: grabbing; }
 #scene {
   position: absolute; inset: 0;
   width: 100%; height: 100%; display: block;
@@ -210,6 +213,15 @@ main {
   display: flex; align-items: center; gap: 10px;
   flex-wrap: wrap; padding-top: 12px;
 }
+
+.scene:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  padding: 16px;
+  border-radius: 0;
+  background: var(--bg);
+}
+.scene:fullscreen .dropzone { min-height: 0; }
 .controlgroup {
   display: flex;
   border: 1px solid var(--line-strong);

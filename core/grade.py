@@ -24,7 +24,7 @@ def _signed(value, digits=1):
 # that the implementation does not use.
 SCALES = {
     "Декодирование": "",
-    "Контраст символа": "≥40/30/20/10 %",
+    "Контраст символа": "≥70/55/40/20 %",
     "Запас по коэффициенту отражения": "≥10/7/5/3 %",
     "Неоднородность освещения": "≤8/14/22/30 %",
     "Осевая неоднородность": "≤8/12/16/20 %",
@@ -66,13 +66,14 @@ class Param:
 
 
 def _grade_contrast(sc_pct):
-    if sc_pct >= 40:
+    """ISO 15415-oriented symbol-contrast bands (A/B/C/D/F)."""
+    if sc_pct >= 70:
         return 4
-    if sc_pct >= 30:
+    if sc_pct >= 55:
         return 3
-    if sc_pct >= 20:
+    if sc_pct >= 40:
         return 2
-    if sc_pct >= 10:
+    if sc_pct >= 20:
         return 1
     return 0
 

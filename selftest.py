@@ -7,6 +7,7 @@ import numpy as np
 import zxingcpp
 
 import crpt
+from core.grade import _grade_contrast
 from gs1 import is_gs1, parse, validate
 from verifier import (_parse_growth, analyze, calibration_note, hri_content,
                       to_dict)
@@ -201,6 +202,9 @@ def _run_checks():
     check("grade: zxing UEC is used for unused error correction",
           uec is not None and uec.value == "100%" and uec.grade == 4,
           f"{uec.value if uec else None} ({uec.grade if uec else None})")
+    check("grade: contrast thresholds follow the ISO-oriented scale",
+          [_grade_contrast(v) for v in (70, 55, 40, 20, 19, 62)]
+          == [4, 3, 2, 1, 0, 3])
 
     # --- separated read / GS1 / quality statuses ---
     check("status: plain DataMatrix is not reported as GS1",
