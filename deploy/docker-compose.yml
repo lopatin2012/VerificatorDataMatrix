@@ -1,0 +1,37 @@
+# Deployment for the DataMatrix web service.
+#
+# The container joins the network of the existing Caddy instance (default:
+# deploy_default) and is reachable from Caddy as `datamatrix:8501`.
+#
+#   docker compose up -d --build
+#
+# Set WEB_NETWORK if the Caddy project uses another network.
+name: datamatrix
+
+services:
+  datamatrix:
+    build:
+      context: ..
+    image: datamatrix-verifier:latest
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    expose:
+      - "8501"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/api/version', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
+    name: ${WEB_NETWORK:-deploy_default}

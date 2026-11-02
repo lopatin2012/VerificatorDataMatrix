@@ -5,6 +5,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        fonts-dejavu-core \
         libgl1 \
         libglib2.0-0 \
         libxcb1 \

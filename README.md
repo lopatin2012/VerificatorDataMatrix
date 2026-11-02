@@ -107,6 +107,11 @@ docker build -t dm-verifier .
 docker run --rm -p 8501:8501 dm-verifier
 ```
 
+Серверный compose для работы за существующим Caddy лежит в
+[deploy/docker-compose.yml](deploy/docker-compose.yml): контейнер
+`datamatrix` подключается к внешней сети Caddy и слушает `8501`.
+Подробности — в [deploy/README.md](deploy/README.md).
+
 ## Сборка (один exe для пользователя)
 
 Самодостаточный файл `dist\DataMatrixVerifier.exe` — Python и зависимости
@@ -262,6 +267,7 @@ GS-разделители и даты), декод синтетического 
 - `core/decode.py` — декодирование (zxing + сетка).
 - `core/grade.py` — грейды параметров по ISO 15415.
 - `Dockerfile`, `.dockerignore` — сборка web-сервиса в образ (порт 8501).
+- `deploy/` — серверный compose и пример Caddyfile для запуска за Caddy.
 - `samples/` — тестовые изображения G0–G4/ERROR (локальные, в git не хранятся).
 
 Для ручных прогонов удобно использовать и локальную папку с реальными фото

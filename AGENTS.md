@@ -217,7 +217,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.46`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.47`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.
@@ -229,6 +229,10 @@ edit, **minor** after a session with >30 user requests, **major** after >300.
 `favicon.ico`, excludes torch/tkinter; `build/` and `dist/` are gitignored.
 Releases are published with `gh release create v<version>` attaching the exe;
 the tag must match `version.py`. Docker builds the web service only.
+`deploy/docker-compose.yml` runs it as project `datamatrix` on the external
+Caddy network (`deploy_default`, override with `WEB_NETWORK`); Caddy proxies
+to `datamatrix:8501`. The Dockerfile installs `fonts-dejavu-core` so Cyrillic
+PDF reports work on Linux (Windows fonts are tried first).
 
 ## Known gaps
 

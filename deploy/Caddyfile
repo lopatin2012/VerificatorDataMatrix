@@ -1,0 +1,14 @@
+www.{$SITE_ADDRESS} {
+	redir https://{$SITE_ADDRESS}{uri} permanent
+}
+
+{$SITE_ADDRESS} {
+	encode gzip
+
+	log {
+		output stdout
+		format json
+	}
+
+	reverse_proxy datamatrix:8501
+}

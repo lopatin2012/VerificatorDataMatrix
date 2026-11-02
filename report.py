@@ -25,9 +25,14 @@ def _register_fonts():
         return
     normal = "Helvetica"
     bold = "Helvetica-Bold"
-    for path, name in (("C:/Windows/Fonts/arial.ttf", "AppFont"),
-                       ("C:/Windows/Fonts/times.ttf", "AppFontTimes"),
-                       ("C:/Windows/Fonts/DejaVuSans.ttf", "AppFontDejaVu")):
+    for path, name in (
+            ("C:/Windows/Fonts/arial.ttf", "AppFont"),
+            ("C:/Windows/Fonts/times.ttf", "AppFontTimes"),
+            ("C:/Windows/Fonts/DejaVuSans.ttf", "AppFontDejaVu"),
+            ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+             "AppFontDejaVu"),
+            ("/usr/share/fonts/truetype/liberation/"
+             "LiberationSans-Regular.ttf", "AppFontLiberation")):
         if os.path.exists(path):
             try:
                 pdfmetrics.registerFont(TTFont(name, path))
@@ -35,8 +40,13 @@ def _register_fonts():
                 break
             except Exception:
                 continue
-    for path, name in (("C:/Windows/Fonts/arialbd.ttf", "AppFontBold"),
-                       ("C:/Windows/Fonts/DejaVuSans-Bold.ttf", "AppFontDejaVuBold")):
+    for path, name in (
+            ("C:/Windows/Fonts/arialbd.ttf", "AppFontBold"),
+            ("C:/Windows/Fonts/DejaVuSans-Bold.ttf", "AppFontDejaVuBold"),
+            ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+             "AppFontDejaVuBold"),
+            ("/usr/share/fonts/truetype/liberation/"
+             "LiberationSans-Bold.ttf", "AppFontLiberationBold")):
         if os.path.exists(path):
             try:
                 pdfmetrics.registerFont(TTFont(name, path))
