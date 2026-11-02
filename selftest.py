@@ -7,7 +7,7 @@ import numpy as np
 import zxingcpp
 
 from gs1 import parse, validate
-from verifier import analyze
+from verifier import _parse_growth, analyze, calibration_note
 
 
 def _module_map(text):
@@ -116,8 +116,8 @@ def _run_checks():
     qz_value = None
     if qz is not None:
         try:
-            qz_value = float(qz.value.rstrip("x"))
-        except ValueError:
+            qz_value = float(qz.value.split()[0].replace(",", "."))
+        except (ValueError, IndexError):
             qz_value = None
     check("geometry: quiet zone measured from the image",
           qz_value is not None and qz_value >= 2.5 and qz.grade >= 3,
@@ -144,6 +144,36 @@ def _run_checks():
           rect.x_dim_um is not None and abs(rect.x_dim_um - 100) < 3
           and abs(rect.y_dim_um - 100) < 3,
           f"x={rect.x_dim_um} y={rect.y_dim_um}")
+
+    # --- calibration and report formatting ---
+    check("calibration: default 10 um/px is flagged",
+          res.calibration_default and res.um_per_px == 10.0,
+          f"{res.um_per_px} default={res.calibration_default}")
+    custom = analyze(_render_solid(mod, quiet=3), um_per_px=20.0)
+    check("calibration: explicit value changes the scale",
+          not custom.calibration_default and custom.um_per_px == 20.0
+          and abs(custom.x_dim_um - 2 * res.x_dim_um) < 2,
+          f"{custom.um_per_px} default={custom.calibration_default} "
+          f"x={custom.x_dim_um} vs {res.x_dim_um}")
+    check("calibration: note distinguishes default and custom",
+          "по умолчанию" in calibration_note(res)
+          and "задана" in calibration_note(custom),
+          f"{calibration_note(res)} / {calibration_note(custom)}")
+    check("report: class line is human-readable",
+          "×" in res.overall_class and "мкм" in res.overall_class
+          and "/" not in res.overall_class,
+          res.overall_class)
+    axial = next((p for p in res.params
+                  if p.name == "Осевая неоднородность"), None)
+    check("report: parameter values use a decimal comma",
+          axial is not None and "," in axial.value, axial.value if axial else "")
+    growth = next((p for p in res.params
+                   if p.name == "Размерность печати X"), None)
+    check("report: print growth is signed and keeps a unit",
+          growth is not None and growth.value[0] in "+-"
+          and "мкм" in growth.value, growth.value if growth else "")
+    check("report: growth parser accepts a comma",
+          _parse_growth("+1,8 мкм; +2,0%") == (1.8, 2.0))
 
     return checks
 

@@ -6,6 +6,19 @@ The overall symbol grade is the minimum of the graded parameters (ISO rule).
 import numpy as np
 
 
+def _ru(value, digits=0):
+    """Number with a Russian decimal comma."""
+    return f"{value:.{digits}f}".replace(".", ",")
+
+
+def _signed(value, digits=1):
+    """Signed number with a Russian decimal comma, e.g. '+2,0'."""
+    value = round(float(value), digits)
+    if value == 0:
+        value = 0.0  # avoid printing '-0,0'
+    return f"{value:+.{digits}f}".replace(".", ",")
+
+
 class Param:
     def __init__(self, name, value, grade, unit=""):
         self.name = name
@@ -160,12 +173,13 @@ def grade_symbol(sym, decoded):
         uec_pct = 0.0
 
     params.append(Param("Декодирование", "ОК" if decoded else "Ошибка", dec_grade))
-    params.append(Param("Контраст символа", f"{sc_pct:.0f}%", _grade_contrast(sc_pct)))
+    params.append(Param("Контраст символа", f"{_ru(sc_pct)}%",
+                        _grade_contrast(sc_pct)))
 
     # reflectance margin: margin between darkest light-module and lightest
     # dark-module region
     rm_pct = max(0.0, (rmax - rmin) / 255.0 * 100.0)
-    params.append(Param("Запас по коэффициенту отражения", f"{rm_pct:.0f}%",
+    params.append(Param("Запас по коэффициенту отражения", f"{_ru(rm_pct)}%",
                         _grade_reflectance_margin(rm_pct)))
 
     # illumination non-uniformity: relative std of light-module reflectance
@@ -183,38 +197,45 @@ def grade_symbol(sym, decoded):
         ill_g = 1
     else:
         ill_g = 0
-    params.append(Param("Неоднородность освещения", f"{ill:.0f}%", ill_g))
+    params.append(Param("Неоднородность освещения", f"{_ru(ill)}%", ill_g))
 
     # axial non-uniformity: relative mismatch of X and Y module pitch
     ax = _axial_nonuniformity(sym)
-    params.append(Param("Осевая неоднородность", f"{ax:.1f}%", _grade_axial(ax)))
+    params.append(Param("Осевая неоднородность", f"{_ru(ax, 1)}%",
+                        _grade_axial(ax)))
 
     # grid non-uniformity: module-center deviation from ideal grid
     gnu = _grid_nonuniformity(sym)
-    params.append(Param("Неоднородность сетки", f"{gnu:.1f}%", _grade_grid(gnu)))
+    params.append(Param("Неоднородность сетки", f"{_ru(gnu, 1)}%",
+                        _grade_grid(gnu)))
 
     # print growth X/Y
     gx, gy = _print_growth(sym)
-    params.append(Param("Размерность печати X", f"{gx[0]:.0f} мкм; {gx[1]:.0f}%",
-                        _grade_print_growth(gx[1])))
-    params.append(Param("Размерность печати Y", f"{gy[0]:.0f} мкм; {gy[1]:.0f}%",
-                        _grade_print_growth(gy[1])))
+    params.append(Param(
+        "Размерность печати X",
+        f"{_signed(gx[0])} мкм; {_signed(gx[1])}%",
+        _grade_print_growth(gx[1])))
+    params.append(Param(
+        "Размерность печати Y",
+        f"{_signed(gy[0])} мкм; {_signed(gy[1])}%",
+        _grade_print_growth(gy[1])))
 
     # fixed pattern: L arms and timing sequence
     l_left, l_bottom, timing = _pattern_damage(sym)
-    params.append(Param("Левая часть шаблона \"L\"", f"{l_left:.0f}%",
+    params.append(Param("Левая часть шаблона \"L\"", f"{_ru(l_left)}%",
                         _grade_fixed_pattern(l_left)))
-    params.append(Param("Нижняя часть шаблона \"L\"", f"{l_bottom:.0f}%",
+    params.append(Param("Нижняя часть шаблона \"L\"", f"{_ru(l_bottom)}%",
                         _grade_fixed_pattern(l_bottom)))
-    params.append(Param("Последовательность тактовых модулей", f"{timing:.0f}%",
+    params.append(Param("Последовательность тактовых модулей", f"{_ru(timing)}%",
                         _grade_fixed_pattern(timing)))
 
     # quiet zone check
     qz = _quiet_zone(sym)
-    params.append(Param("Свободная зона", f"{qz:.1f}x", _grade_quiet_zone(qz)))
+    params.append(Param("Свободная зона", f"{_ru(qz, 1)} мод.",
+                        _grade_quiet_zone(qz)))
 
     # unused error correction / error-correction margin
-    params.append(Param("Запас коррекции ошибок", f"{uec_pct:.0f}%",
+    params.append(Param("Запас коррекции ошибок", f"{_ru(uec_pct)}%",
                         _grade_unused_ec(uec_pct)))
 
     return params

@@ -8,6 +8,40 @@ from gs1 import parse, validate
 # Standard reference apertures in microns (ISO 15415 selection).
 STANDARD_APERTURES = [160, 200, 250, 318, 400, 500, 630]
 
+# Used when the caller does not supply a calibration. Physical dimensions
+# derived from it are flagged as approximate (see Result.calibration_default).
+DEFAULT_UM_PER_PX = 10.0
+
+
+def _calibration(um_per_px):
+    """Return (value, is_default) for a user-supplied or missing calibration."""
+    if um_per_px is None:
+        return DEFAULT_UM_PER_PX, True
+    value = float(um_per_px)
+    if not value > 0:
+        raise ValueError("um_per_px must be positive")
+    return value, False
+
+
+def fmt_ru(value, digits=0):
+    """Format a number with a decimal comma (Russian UI convention)."""
+    return f"{value:.{digits}f}".replace(".", ",")
+
+
+def calibration_note(res):
+    """Human-readable calibration status for reports."""
+    value = fmt_ru(res.um_per_px or DEFAULT_UM_PER_PX, 2).rstrip("0").rstrip(",")
+    suffix = " (по умолчанию)" if res.calibration_default else " (задана)"
+    return f"Калибровка: {value} мкм/px{suffix}"
+
+
+def calibration_warning(res):
+    """Warning to show while the default calibration is in use."""
+    if res.calibration_default:
+        return ("Калибровка не задана: физические размеры и грейды "
+                "ориентировочные.")
+    return ""
+
 
 def imread_unicode(path, flags=cv2.IMREAD_COLOR):
     """Read an image, tolerating non-ASCII (e.g. Cyrillic) paths.
@@ -34,6 +68,10 @@ class Result:
         self.min_grade = None
         self.min_reflectance = None
         self.max_reflectance = None
+        self.um_per_px = None
+        self.calibration_default = True
+        self.module_px_x = None
+        self.module_px_y = None
         self.x_dim_um = None
         self.y_dim_um = None
         self.print_growth_x = None
@@ -43,24 +81,32 @@ class Result:
         self.elements = []
         self.gs1_warnings = []
         self.overall_class = None
+        self.class_code = None
         self.validation = "FAIL"
         self.symbol = None
         self.corner_points = None
         self.error = None
 
 
-def analyze(img, um_per_px=10.0):
+def analyze(img, um_per_px=None):
     """Analyze one image (BGR color or grayscale). Returns a Result for the
-    first detected DataMatrix, or a Result with error="Код не найден"."""
+    first detected DataMatrix, or a Result with error="Код не найден".
+
+    `um_per_px=None` means the default 10 um/px; the result is then marked
+    with `calibration_default=True`.
+    """
     results = analyze_all(img, um_per_px)
     if results:
         return results[0]
+    value, is_default = _calibration(um_per_px)
     res = Result()
+    res.um_per_px = value
+    res.calibration_default = is_default
     res.error = "Код не найден"
     return res
 
 
-def analyze_all(img, um_per_px=10.0):
+def analyze_all(img, um_per_px=None):
     """Analyze ALL DataMatrix codes found in one image.
 
     Returns a list of Result, one per detected symbol (deduplicated by
@@ -68,9 +114,10 @@ def analyze_all(img, um_per_px=10.0):
     decoded before undecoded). Each Result grades its own symbol; undecoded
     symbols are included with validation="FAIL".
     """
+    value, is_default = _calibration(um_per_px)
     results = []
     for dec in decode.decode_all(img):
-        res = _analyze_one(img, dec, um_per_px)
+        res = _analyze_one(img, dec, value, is_default)
         if res is not None:
             results.append(res)
     results.sort(key=lambda r: ((r.min_grade if r.min_grade is not None else 0.0),
@@ -78,8 +125,10 @@ def analyze_all(img, um_per_px=10.0):
     return results
 
 
-def _analyze_one(img, dec, um_per_px):
+def _analyze_one(img, dec, um_per_px, calibration_default):
     res = Result()
+    res.um_per_px = um_per_px
+    res.calibration_default = calibration_default
     gray = getattr(dec, "gray", None)
     if gray is None:
         gray = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -117,6 +166,8 @@ def _analyze_one(img, dec, um_per_px):
     # this used to be the warp-space pitch, inflating dimensions ~5x).
     mod_x = getattr(sym, "module_px_x", 0.0) or sym.module_px
     mod_y = getattr(sym, "module_px_y", 0.0) or sym.module_px
+    res.module_px_x = mod_x
+    res.module_px_y = mod_y
     res.x_dim_um = mod_x * um_per_px
     res.y_dim_um = mod_y * um_per_px
     mod_um = 0.5 * (res.x_dim_um + res.y_dim_um)
@@ -138,16 +189,17 @@ def _analyze_one(img, dec, um_per_px):
         res.min_reflectance = int(np.percentile(ref, 2))
         res.max_reflectance = int(np.percentile(ref, 98))
 
-    res.overall_class = _class_string(res, mod_um)
+    res.overall_class = _class_string(res)
+    res.class_code = _class_code(res)
     res.validation = "OK" if dec.ok else "FAIL"
 
     return res
 
 
 def _parse_growth(s):
-    """Parse '19 мкм; 5%' into (um, pct)."""
+    """Parse '+19 мкм; +5,0%' into (um, pct)."""
     try:
-        parts = s.replace(";", " ").split()
+        parts = s.replace(",", ".").replace(";", " ").split()
         um = float(parts[0])
         pct = float(parts[2].replace("%", ""))
         return um, pct
@@ -201,16 +253,23 @@ def to_dict(res):
         "validation": res.validation,
         "good": good,
         "overall_class": res.overall_class,
+        "class_code": res.class_code,
         "min_grade": res.min_grade,
         "score": score,
         "color": color,
+        "um_per_px": res.um_per_px,
+        "calibration_default": res.calibration_default,
+        "calibration_note": calibration_note(res),
+        "calibration_warning": calibration_warning(res),
+        "module_px_x": res.module_px_x,
+        "module_px_y": res.module_px_y,
         "x_dim_um": res.x_dim_um,
         "y_dim_um": res.y_dim_um,
         "aperture_um": res.aperture_um,
         "symbol_size": f"{res.symbol.rows}x{res.symbol.cols}" if res.symbol else None,
         "params": [
             {"name": p.name, "value": p.value, "grade": p.grade,
-             "passed": p.passed, "level": p.level}
+             "display": p.display, "passed": p.passed, "level": p.level}
             for p in res.params
         ],
         "elements": [
@@ -239,9 +298,17 @@ def _select_aperture(x_dim_um):
     return STANDARD_APERTURES[-1]
 
 
-def _class_string(res, mod_um):
-    grade_str = f"{res.min_grade:.1f}".replace(".", ",")
-    return f"{grade_str}/0{res.symbol.rows}/{int(res.aperture_um or 0)} (В)"
+def _class_string(res):
+    """Human-readable class line: '4,0 · 22×22 · 160 мкм'."""
+    grade_str = fmt_ru(res.min_grade, 1)
+    size = f"{res.symbol.rows}×{res.symbol.cols}"
+    return f"{grade_str} · {size} · {int(res.aperture_um or 0)} мкм"
+
+
+def _class_code(res):
+    """Compact machine string for exports, e.g. '4.0/22/160'."""
+    size = max(res.symbol.rows, res.symbol.cols)
+    return f"{res.min_grade:.1f}/{size:02d}/{int(res.aperture_um or 0)}"
 
 
 def _corners_ordered(corners):

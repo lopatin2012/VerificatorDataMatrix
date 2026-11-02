@@ -67,9 +67,10 @@ typecheck, formatter, or codegen config — don't invent one.
 
 `main.py --selftest` (`selftest.py`) is self-contained: GS1 parsing/validation
 (including GS-separated variable fields and dates) plus synthetic solid, dotted,
-and inverted DataMatrix decode and geometry/grading regressions (19 checks). It
-asserts that dimensions are reported in source microns and that a rectangular
-ECC200 symbol (12x26) is not penalised for its aspect ratio. Real images are not
+and inverted DataMatrix decode and geometry/grading regressions (26 checks). It
+asserts that dimensions are reported in source microns, that a rectangular
+ECC200 symbol (12x26) is not penalised for its aspect ratio, that the default
+calibration is flagged, and that report values use a decimal comma. Real images are not
 in git, so still verify decode/geometry changes manually against
 `test_image_codes/` or the owner's `samples/`. CI
 (`.github/workflows/ci.yml`) runs the same command on Ubuntu after installing
@@ -80,9 +81,11 @@ in git, so still verify decode/geometry changes manually against
 - `main.py` — argparse entry: GUI, web, CLI, selftest. Defaults to GUI.
   `--gui --file PATH` opens the GUI with that image already analyzed
   (`ui.main(initial_file=...)` → `VerifierApp.open_path`); `--gui --dir` and
-  `--json --gui` are rejected. The CLI prints **all** codes per image and exits
-  1 if any image decoded nothing; `--json` emits `[{file, results:[to_dict]}]`
-  (or `{file, error}`) for automation.
+  `--json --gui` are rejected. `--um-per-px` accepts a comma and defaults to
+  `None`, which means 10 µm/px **marked as approximate** (never silently
+  precise). The CLI prints **all** codes per image and exits 1 if any image
+  decoded nothing; `--json` emits `[{file, results:[to_dict]}]` (or
+  `{file, error}`) for automation.
 - `tools/` — Windows drag-and-drop launchers (not bundled into the exe):
   `quick_open.bat` → `main.py --gui --file`, `quick_check.bat` → console
   `main.py --file` with `pause`, `quick_web.bat` → `tools/quick_web.py`
@@ -94,8 +97,13 @@ in git, so still verify decode/geometry changes manually against
 - `verifier.analyze_all(img)` is the pipeline entry: decode + grid + grades +
   GS1 for **every** symbol, returning a list of `Result` sorted best-first
   (decoded/higher grade first); `analyze(img)` returns the first or an error
-  Result. `to_dict()` is the JSON shape; `score_of`, `is_good`,
-  `plain_content`, and `problem_regions` live here too.
+  Result. `um_per_px=None` selects `DEFAULT_UM_PER_PX` and sets
+  `Result.calibration_default=True`; `calibration_note()`/`calibration_warning()`
+  feed every report. `overall_class` is human-readable (`4,0 · 22×22 · 160 мкм`),
+  while `class_code` keeps the compact `4.0/22/160`. `to_dict()` is the JSON
+  shape and carries `um_per_px`, `calibration_default`, `calibration_note`,
+  `calibration_warning`, `module_px_x/y` and per-param `display`; `score_of`,
+  `is_good`, `plain_content`, and `problem_regions` live here too.
 - `core/decode.py` — `decode_all` returns one `DecodeResult` per symbol,
   deduped by quad. zxing gets an RGB image, and gray comes from
   `cvtColor(BGR2GRAY)` — **never** `cv2.imread(..., IMREAD_GRAYSCALE)`, which
@@ -132,7 +140,15 @@ in git, so still verify decode/geometry changes manually against
   approximate (see Known gaps). Parameter names are exact Russian strings that
   `problem_regions` and the UI match; renaming one silently breaks the heatmap.
   Axial non-uniformity compares the physical **module pitch** along X/Y, never
-  the row/column counts (that zeroed every rectangular ECC200 symbol).
+  the row/column counts (that zeroed every rectangular ECC200 symbol). Values
+  use a Russian decimal comma; print growth is signed (`+2,0 мкм; +2,0%`) and
+  quiet zone is `2,8 мод.`.
+- `ui.py` + `config.py` — GUI calibration is an empty entry by default (10 µm/px,
+  flagged approximate); «Калибровать по X-dim...» divides the nominal µm by
+  `Result.module_px_x`; the value is persisted under APPDATA (or
+  `~/.config/DataMatrixVerifier`) via `config.py`, never in the repo. The report
+  tab is a read-only `tk.Text` (selectable/copyable) with PDF/calibrate/reset
+  buttons and red calibration/estimate warnings.
 - `gs1.py` — parses AIs from raw bytes or HRI; a GS/FNC1 separator is
   authoritative for variable-length fields. Supports pattern AIs (310n–316n,
   390n–395n). `validate()` returns warnings (unknown AI, fixed-length mismatch,
@@ -149,17 +165,22 @@ in git, so still verify decode/geometry changes manually against
   LRU of 50 (`{res, img, payload, thumb, ts}`), so ids 404 once evicted and
   history dies with the process. `history.txt` is one decoded code per line
   (`content_plain`, real GS separators, CRLF); undecoded entries are skipped.
-  Upload cap is 25 MB (`MAX_CONTENT_LENGTH`). PDFs go to `PDF_DIR` (a temp
-  dir), never `webui/`. `@app.after_request` sets `Cache-Control: no-store`.
+  `/api/analyze` also accepts an optional `um_per_px` form field (comma or dot,
+  must be > 0; invalid values return 400) and stores calibration fields in the
+  payload; the calibration input is persisted in `localStorage`. `history.csv`
+  has a `Калибровка` column. Upload cap is 25 MB (`MAX_CONTENT_LENGTH`); a 413
+  returns JSON. PDFs go to `PDF_DIR` (a temp dir), never `webui/`.
+  `@app.after_request` sets `Cache-Control: no-store`.
 - `report.py` — `build_pdf` is used by both the web service and the GUI button;
-  `build_history_pdf` builds the history export. `ui.py` draws its own overlays
+  it prints calibration (red warning + disclaimer), separates «Чтение: OK» from
+  the quality verdict, and `build_history_pdf` builds the history export. `ui.py` draws its own overlays
   and shows a "Код не найден" banner; its "Экспорт TXT" button writes
   `scan_log` (all decoded contents this session, consecutive duplicates
   collapsed) as UTF-8 CRLF, one code per line.
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.36`) appears in the window title, CLI
+`VERSION` in `version.py` (currently `1.0.37`) appears in the window title, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.

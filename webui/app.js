@@ -311,7 +311,8 @@ function renderResult(r) {
   scoreEl.innerHTML = r.score + '<span class="of"> из 100</span>';
   scoreEl.style.color = r.color;
   $("grade").textContent = "Грейд " + r.min_grade.toFixed(1).replace(".", ",") +
-    (r.symbol_size ? " / " + r.symbol_size : "");
+    (r.symbol_size ? " / " + r.symbol_size : "") +
+    (r.calibration_default ? " · без калибровки" : "");
   $("grade").style.color = vcolor;
   drawGauge(r.score, r.color);
 
@@ -431,20 +432,36 @@ function renderData(data) {
 function renderReport(data) {
   const lines = [];
   lines.push("Класс: " + data.overall_class);
-  lines.push("Валидация: " + data.validation);
+  if (data.class_code) lines.push("Код класса (машинный): " + data.class_code);
+  lines.push("Чтение: " + (data.validation === "OK" ? "OK" : "НЕ ДЕКОДИРОВАНО"));
+  if (data.calibration_note) lines.push(data.calibration_note);
+  if (data.calibration_warning) {
+    lines.push("ВНИМАНИЕ: " + data.calibration_warning);
+  }
   lines.push("Содержимое: " + (data.content || "(не декодировано)"));
   lines.push("Размер символа: " + data.symbol_size);
-  lines.push("X-размерность: " + data.x_dim_um.toFixed(0) + " мкм | Y: " + data.y_dim_um.toFixed(0) + " мкм | Апертура: " + data.aperture_um + " мкм");
+  lines.push("X-размерность: " + data.x_dim_um.toFixed(0) + " мкм | Y: " +
+             data.y_dim_um.toFixed(0) + " мкм | Апертура: " +
+             data.aperture_um + " мкм");
   lines.push("");
-  lines.push("Параметры ISO 15415:");
+  lines.push("Параметры ISO 15415 (оценка, не сертификация):");
   (data.params || []).forEach(p => {
-    lines.push("  [" + (p.passed ? "OK" : "FAIL") + "] " + p.name + ": " + p.value);
+    const mark = p.level === "ok" ? "OK" : (p.level === "warn" ? "WARN" : "FAIL");
+    lines.push("  [" + mark + "] " + p.name + ": " + (p.display || p.value));
   });
+  if ((data.gs1_warnings || []).length) {
+    lines.push("");
+    lines.push("Предупреждения GS1 (" + data.gs1_warnings.length + "):");
+    data.gs1_warnings.forEach(w => lines.push("  ! " + w));
+  }
   lines.push("");
   lines.push("Данные GS1:");
   (data.elements || []).forEach(el => {
     lines.push("  " + el.name + " = " + el.value);
   });
+  if (!(data.elements || []).length) lines.push("  (нет)");
+  lines.push("");
+  lines.push("Грейды — оценка по ISO/IEC 15415, не сертификация.");
   $("reporttext").textContent = lines.join("\n");
 }
 
@@ -509,6 +526,8 @@ function setImage(dataUrl) {
 async function analyze(file) {
   const fd = new FormData();
   fd.append("image", file);
+  const um = ($("umpp").value || "").trim();
+  if (um) fd.append("um_per_px", um.replace(",", "."));
   $("validation").textContent = "Анализ...";
   $("validation").style.color = "#f9a825";
   try {
@@ -581,6 +600,22 @@ function wireCamera() {
   });
 }
 
+function wireCalibration() {
+  const el = $("umpp");
+  if (!el) return;
+  try {
+    const saved = localStorage.getItem("dm_um_per_px");
+    if (saved) el.value = saved;
+  } catch (e) { /* storage disabled */ }
+  el.addEventListener("change", () => {
+    const value = (el.value || "").trim();
+    try {
+      if (value) localStorage.setItem("dm_um_per_px", value);
+      else localStorage.removeItem("dm_um_per_px");
+    } catch (e) { /* storage disabled */ }
+  });
+}
+
 function wireControls() {
   $("zoomin").addEventListener("click", () => { state.zoom = Math.min(4, state.zoom + 0.25); drawScene(); });
   $("zoomout").addEventListener("click", () => { state.zoom = Math.max(0.5, state.zoom - 0.25); drawScene(); });
@@ -639,6 +674,7 @@ function wireHistoryExports() {
 fetchVersion();
 wireDropzone();
 wireCamera();
+wireCalibration();
 wireControls();
 wireHistoryExports();
 loadHistory();

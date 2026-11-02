@@ -136,7 +136,16 @@ def api_analyze():
     if img is None or img.size == 0:
         return jsonify({"error": "Не удалось прочитать изображение"}), 400
 
-    um = request.form.get("um_per_px", type=float, default=10.0)
+    raw_um = (request.form.get("um_per_px") or "").strip()
+    um = None
+    if raw_um:
+        try:
+            um = float(raw_um.replace(",", "."))
+        except ValueError:
+            return jsonify({"error": "Некорректная калибровка"}), 400
+        if um <= 0:
+            return jsonify({"error": "Калибровка должна быть больше нуля"}), 400
+
     try:
         with ANALYZE_LOCK:
             results = analyze_all(img, um_per_px=um)
@@ -214,13 +223,13 @@ def api_history_csv():
     out = io.StringIO()
     w = csv.writer(out, delimiter=";")
     w.writerow(["Время", "Валидация", "Класс", "Оценка", "Символ",
-                "Содержимое", "Данные GS1"])
+                "Содержимое", "Калибровка", "Данные GS1"])
     for d in rows:
         elems = "; ".join(f'{el["name"]}={el["value"]}'
                           for el in d.get("elements", []))
         w.writerow([d["ts_text"], d["validation"], d["overall_class"] or "",
                     d["score"], d["symbol_size"] or "", d["content"] or "",
-                    elems])
+                    d.get("calibration_note", ""), elems])
     data = "\ufeff" + out.getvalue()  # BOM so Excel reads UTF-8
     return Response(
         data, mimetype="text/csv; charset=utf-8",

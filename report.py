@@ -14,6 +14,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (Image, Paragraph, SimpleDocTemplate, Spacer,
                                 Table, TableStyle)
 
+from verifier import calibration_note, calibration_warning, is_good
 from version import VERSION
 
 _FONTS = {"normal": None, "bold": None}
@@ -117,13 +118,17 @@ def build_pdf(res, frame_bgr, path):
     xd = f"{res.x_dim_um:.0f}" if res.x_dim_um is not None else "—"
     yd = f"{res.y_dim_um:.0f}" if res.y_dim_um is not None else "—"
     ap = f"{res.aperture_um} мкм" if res.aperture_um is not None else "—"
+    cal_style = ParagraphStyle("calcell", fontName=F, fontSize=8.5,
+                               leading=10.5)
     info = [
-        ["Класс символа", res.overall_class or "—", "Штрих-код", "GS1 DataMatrix"],
+        ["Класс символа", res.overall_class or "—", "Штрих-код",
+         "GS1 DataMatrix"],
         ["Содержимое",
-         Paragraph(_clean_para(res.content or "(не декодировано)"), cell), "Размер символа",
-         size_txt],
+         Paragraph(_clean_para(res.content or "(не декодировано)"), cell),
+         "Размер символа", size_txt],
         ["X-размерность", xd, "Y-размерность", yd],
-        ["Апертура", ap, "", ""],
+        ["Апертура", ap, "Калибровка",
+         Paragraph(_clean_para(calibration_note(res)), cal_style)],
     ]
     info_table = Table(info, colWidths=[38 * mm, 55 * mm, 38 * mm, 45 * mm])
     info_table.setStyle(TableStyle([
@@ -142,12 +147,30 @@ def build_pdf(res, frame_bgr, path):
     story.append(info_table)
     story.append(Spacer(1, 4 * mm))
 
-    # Prominent validation verdict, centered above the image block
-    val_ok = res.validation == "OK"
+    # Reading and print-quality verdicts are separate: a decoded symbol can
+    # still fail the quality check.
+    read_ok = res.validation == "OK"
+    good = is_good(res)
     val_style = ParagraphStyle(
         "valbig", fontName=FB, fontSize=20, leading=24, alignment=TA_CENTER,
-        textColor=colors.HexColor("#2e7d32") if val_ok else colors.HexColor("#c62828"))
-    story.append(Paragraph("Валидация: " + ("OK" if val_ok else "БРАК"), val_style))
+        textColor=colors.HexColor("#2e7d32") if read_ok
+        else colors.HexColor("#c62828"))
+    story.append(Paragraph(
+        "Чтение: OK" if read_ok else "Чтение: ошибка", val_style))
+    if read_ok:
+        q_style = ParagraphStyle(
+            "quality", fontName=FB, fontSize=15, leading=19,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#2e7d32") if good
+            else colors.HexColor("#c62828"))
+        story.append(Paragraph("Качество: " + ("ГОДЕН" if good else "БРАК"),
+                               q_style))
+    warning = calibration_warning(res)
+    if warning:
+        warn_style = ParagraphStyle(
+            "calwarn", fontName=FB, fontSize=9, leading=12,
+            textColor=colors.HexColor("#c62828"))
+        story.append(Paragraph(_clean_para(warning), warn_style))
     story.append(Spacer(1, 6 * mm))
 
     # Image with located code
@@ -199,6 +222,8 @@ def build_pdf(res, frame_bgr, path):
         style.append(("TEXTCOLOR", (2, i), (2, i), c))
     pt.setStyle(TableStyle(style))
     story.append(pt)
+    story.append(Paragraph(
+        "Грейды — оценка по ISO/IEC 15415, не сертификация.", s_small))
     story.append(Spacer(1, 4 * mm))
 
     # GS1 data

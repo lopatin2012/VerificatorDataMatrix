@@ -3,13 +3,15 @@ import math
 import os
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, simpledialog
 
 import cv2
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps
 
-from verifier import (Result, analyze_all, imread_unicode, is_good,
+from config import load_settings, save_settings
+from verifier import (DEFAULT_UM_PER_PX, Result, analyze_all, calibration_note,
+                      calibration_warning, fmt_ru, imread_unicode, is_good,
                       plain_content, problem_regions, score_of)
 from version import VERSION
 
@@ -113,8 +115,13 @@ class Bar(tk.Canvas):
                               fill=color, outline="")
 
 
+def _fmt_calibration(value):
+    """'10' / '8,5' for the calibration entry."""
+    return fmt_ru(value, 2).rstrip("0").rstrip(",")
+
+
 class VerifierApp:
-    def __init__(self, root):
+    def __init__(self, root, um_per_px=None):
         self.root = root
         root.title(f"DataMatrix Verifier {VERSION}")
         root.geometry("1280x820")
@@ -134,6 +141,23 @@ class VerifierApp:
         self.history = []
         self.history_photos = []
         self.scan_log = []
+        self._pending_um = None
+        self.settings = load_settings()
+        saved_um = (self.settings.get("um_per_px")
+                    if self.settings.get("um_per_px_set") else None)
+        try:
+            saved_um = float(saved_um) if saved_um is not None else None
+            if saved_um is not None and saved_um <= 0:
+                saved_um = None
+        except (TypeError, ValueError):
+            saved_um = None
+        self._saved_calibration = (saved_um is not None, saved_um)
+        if um_per_px is not None:
+            self._initial_calibration = _fmt_calibration(um_per_px)
+        elif saved_um is not None:
+            self._initial_calibration = _fmt_calibration(saved_um)
+        else:
+            self._initial_calibration = ""
 
         self._style = ttk.Style()
         self._style.theme_use("clam")
@@ -184,9 +208,14 @@ class VerifierApp:
         self.cam_btn.pack(side=tk.LEFT, padx=6)
         ttk.Button(toolbar, text="Захват кадра", style="Tool.TButton",
                    command=self.capture_now).pack(side=tk.LEFT)
-        ttk.Label(toolbar, text="  Калибровка (мкм/px):").pack(side=tk.LEFT)
-        self.micron_var = tk.StringVar(value="10")
-        ttk.Entry(toolbar, textvariable=self.micron_var, width=6).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(
+            toolbar,
+            text=f"  Калибровка (мкм/px, пусто = {DEFAULT_UM_PER_PX:g}):"
+        ).pack(side=tk.LEFT)
+        self.micron_var = tk.StringVar(value=self._initial_calibration)
+        ttk.Entry(toolbar, textvariable=self.micron_var, width=6).pack(side=tk.LEFT, padx=(2, 4))
+        ttk.Button(toolbar, text="Калибровать...", style="Tool.TButton",
+                   command=self._calibrate_by_xdim).pack(side=tk.LEFT, padx=(0, 8))
 
         self.file_var = tk.StringVar(value="—")
         ttk.Label(toolbar, textvariable=self.file_var,
@@ -337,11 +366,35 @@ class VerifierApp:
         # Report tab
         report = ttk.Frame(self.notebook)
         self.notebook.add(report, text=" Отчет ")
-        self.report_lbl = tk.Label(report, text="", justify=tk.LEFT, anchor="nw",
-                                   font=("Consolas", 9))
-        self.report_lbl.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-        ttk.Button(report, text="Сформировать PDF отчёт",
-                   command=self._make_pdf).pack(side=tk.BOTTOM, pady=8)
+        report_btns = ttk.Frame(report)
+        report_btns.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 8))
+        report_btns.columnconfigure(0, weight=1)
+        report_btns.columnconfigure(1, weight=1)
+        ttk.Button(report_btns, text="Сформировать PDF",
+                   command=self._make_pdf).grid(
+                       row=0, column=0, sticky="ew", padx=2, pady=2)
+        ttk.Button(report_btns, text="Копировать отчёт",
+                   command=self._copy_report).grid(
+                       row=0, column=1, sticky="ew", padx=2, pady=2)
+        ttk.Button(report_btns, text="Калибровать по X-dim...",
+                   command=self._calibrate_by_xdim).grid(
+                       row=1, column=0, sticky="ew", padx=2, pady=2)
+        ttk.Button(report_btns, text="Сбросить калибровку",
+                   command=self._reset_calibration).grid(
+                       row=1, column=1, sticky="ew", padx=2, pady=2)
+        report_frame = ttk.Frame(report)
+        report_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        self.report_text = tk.Text(report_frame, wrap="word",
+                                   font=("Consolas", 9), bd=0,
+                                   bg="#ffffff", state="disabled")
+        report_sb = ttk.Scrollbar(report_frame, orient="vertical",
+                                  command=self.report_text.yview)
+        self.report_text.configure(yscrollcommand=report_sb.set)
+        self.report_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        report_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.report_text.tag_configure("warn", foreground="#c62828")
+        self.report_text.tag_configure("head", foreground="#1a237e",
+                                       font=("Consolas", 9, "bold"))
 
     def _build_bottom(self, root):
         bottom = ttk.Frame(root, padding=(8, 4))
@@ -421,14 +474,37 @@ class VerifierApp:
     def _start_analysis(self):
         if self.busy:
             return
+        text = self.micron_var.get().strip().replace(",", ".")
+        um = None
+        if text:
+            try:
+                um = float(text)
+            except ValueError:
+                self._set_verdict("Ошибка калибровки", "#c62828",
+                                  "Введите положительное число мкм/px")
+                return
+            if um <= 0:
+                self._set_verdict("Ошибка калибровки", "#c62828",
+                                  "Калибровка должна быть больше нуля")
+                return
+        self._pending_um = um
+        self._remember_calibration(um)
         self.busy = True
         threading.Thread(target=self._analyze, daemon=True).start()
 
+    def _remember_calibration(self, um):
+        """Persist the calibration once per change, not on every camera frame."""
+        key = (um is not None, um)
+        if key == self._saved_calibration:
+            return
+        self._saved_calibration = key
+        settings = load_settings()
+        settings["um_per_px"] = um
+        settings["um_per_px_set"] = um is not None
+        save_settings(settings)
+
     def _analyze(self):
-        try:
-            um = float(self.micron_var.get())
-        except ValueError:
-            um = 10.0
+        um = self._pending_um
         try:
             results = analyze_all(self.frame_bgr, um_per_px=um)
         finally:
@@ -525,7 +601,9 @@ class VerifierApp:
         self.score_lbl.configure(fg=color)
         good = is_good(res)
         txt_color = "#2e7d32" if good else "#c62828"
-        self.grade_var.set(f"Грейд {grade_str} / {res.symbol.rows}x{res.symbol.cols}")
+        suffix = " · без калибровки" if res.calibration_default else ""
+        self.grade_var.set(
+            f"Грейд {grade_str} / {res.symbol.rows}x{res.symbol.cols}{suffix}")
         self.grade_lbl.configure(fg=txt_color)
         self.gauge.set(score, color)
         mapping = {"Контраст символа": "Контраст символа",
@@ -658,26 +736,96 @@ class VerifierApp:
         return self.notebook.tabs()[0]
 
     def _render_report(self, res):
-        if not res or res.error:
-            self.report_lbl.configure(text="Нет данных для отчёта.")
+        if not res or res.error or res.symbol is None:
+            self.report_text.configure(state="normal")
+            self.report_text.delete("1.0", tk.END)
+            self.report_text.insert("1.0", "Нет данных для отчёта.")
+            self.report_text.configure(state="disabled")
             return
-        lines = []
-        lines.append(f"Класс: {res.overall_class}")
-        lines.append(f"Валидация: {res.validation}")
-        lines.append(f"Содержимое: {res.content or '(не декодировано)'}")
-        lines.append(f"Размер символа: {res.symbol.rows}x{res.symbol.cols}")
-        lines.append(f"X-размерность: {res.x_dim_um:.0f} мкм | Y: {res.y_dim_um:.0f} мкм")
-        lines.append(f"Апертура: {res.aperture_um} мкм")
-        lines.append("")
-        lines.append("Параметры ISO 15415:")
+        lines = [
+            f"Класс: {res.overall_class}",
+            f"Код класса (машинный): {res.class_code or '—'}",
+            f"Чтение: {'OK' if res.validation == 'OK' else 'НЕ ДЕКОДИРОВАНО'}",
+            calibration_note(res),
+        ]
+        if res.calibration_default:
+            lines.append("ВНИМАНИЕ: " + calibration_warning(res))
+        lines.extend([
+            f"Содержимое: {res.content or '(не декодировано)'}",
+            f"Размер символа: {res.symbol.rows}×{res.symbol.cols}",
+            (f"X-размерность: {res.x_dim_um:.0f} мкм | "
+             f"Y: {res.y_dim_um:.0f} мкм | Апертура: {res.aperture_um} мкм"),
+            "",
+            "Параметры ISO 15415 (оценка, не сертификация):",
+        ])
         for p in res.params:
-            mark = "OK" if p.passed else "FAIL"
-            lines.append(f"  [{mark}] {p.name}: {p.display}")
+            mark = {"ok": "OK", "warn": "WARN", "error": "FAIL"}.get(p.level,
+                                                                     "FAIL")
+            lines.append(f"  [{mark:<4}] {p.name}: {p.display}")
+        if res.gs1_warnings:
+            lines.append("")
+            lines.append(f"Предупреждения GS1 ({len(res.gs1_warnings)}):")
+            for w in res.gs1_warnings:
+                lines.append(f"  ! {w}")
         lines.append("")
         lines.append("Данные GS1:")
         for el in res.elements:
-            lines.append(f"  {el.display_name()} = {el.value}")
-        self.report_lbl.configure(text="\n".join(lines))
+            lines.append(f"  {el.display_name():<8} = {el.value}")
+        if not res.elements:
+            lines.append("  (нет)")
+        lines.append("")
+        lines.append("Грейды — оценка по ISO/IEC 15415, не сертификация.")
+
+        self.report_text.configure(state="normal")
+        self.report_text.delete("1.0", tk.END)
+        self.report_text.insert("1.0", "\n".join(lines))
+        for i, line in enumerate(lines, start=1):
+            if (line.startswith(("ВНИМАНИЕ", "Грейды"))
+                    or (res.calibration_default
+                        and line.startswith("Калибровка"))):
+                self.report_text.tag_add("warn", f"{i}.0", f"{i}.end")
+            elif line.startswith(("Параметры", "Данные GS1",
+                                  "Предупреждения GS1")):
+                self.report_text.tag_add("head", f"{i}.0", f"{i}.end")
+        self.report_text.configure(state="disabled")
+
+    def _copy_report(self):
+        text = self.report_text.get("1.0", "end-1c").strip()
+        if text and text != "Нет данных для отчёта.":
+            self._copy(text)
+
+    def _calibrate_by_xdim(self):
+        res = self.result
+        if not res or res.symbol is None or not getattr(res, "module_px_x", 0):
+            self._set_verdict("Нет данных", "#c62828",
+                              "Сначала откройте изображение с кодом")
+            return
+        text = simpledialog.askstring(
+            "Калибровка по X-dim",
+            "Номинальный X-dim символа, мкм:",
+            initialvalue=f"{res.x_dim_um:.1f}".replace(".", ","),
+            parent=self.root)
+        if not text:
+            return
+        try:
+            nominal = float(text.replace(",", "."))
+        except ValueError:
+            self._set_verdict("Ошибка калибровки", "#c62828",
+                              "Введите число, например 100")
+            return
+        if nominal <= 0:
+            self._set_verdict("Ошибка калибровки", "#c62828",
+                              "X-dim должен быть больше нуля")
+            return
+        um = nominal / res.module_px_x
+        self.micron_var.set(_fmt_calibration(um))
+        self._start_analysis()
+
+    def _reset_calibration(self):
+        self.micron_var.set("")
+        self._remember_calibration(None)
+        if self.frame_bgr is not None:
+            self._start_analysis()
 
     def _make_pdf(self):
         if self.result is None or self.result.error:
@@ -906,9 +1054,9 @@ class VerifierApp:
         self._set_verdict("—", "#607d8b", "Откройте файл или включите камеру")
 
 
-def main(initial_file=None):
+def main(initial_file=None, um_per_px=None):
     root = tk.Tk()
-    app = VerifierApp(root)
+    app = VerifierApp(root, um_per_px=um_per_px)
     root.protocol("WM_DELETE_WINDOW", lambda: (app.close(), root.destroy()))
     if initial_file:
         # Analyze after the window exists so the result is rendered, not lost.

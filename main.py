@@ -14,10 +14,23 @@ import sys
 
 import cv2
 
-from verifier import Result, analyze_all, imread_unicode, to_dict
+from verifier import (DEFAULT_UM_PER_PX, Result, analyze_all,
+                      calibration_note, calibration_warning, imread_unicode,
+                      to_dict)
 from version import VERSION
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
+
+
+def _positive_float(text):
+    """argparse type: accept '8.5' and '8,5', reject non-positive values."""
+    try:
+        value = float(text.replace(",", "."))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"не число: {text!r}")
+    if value <= 0:
+        raise argparse.ArgumentTypeError("калибровка должна быть больше нуля")
+    return value
 
 
 def print_report(res, path, index=None, total=None):
@@ -35,6 +48,10 @@ def print_report(res, path, index=None, total=None):
     print("Штрих-код:", res.symbology, f"({res.symbol.rows}x{res.symbol.cols})")
     print(f"X-размерность: {res.x_dim_um:.0f} мкм | Y: {res.y_dim_um:.0f} мкм | "
           f"Апертура: {res.aperture_um} мкм")
+    print(calibration_note(res))
+    warning = calibration_warning(res)
+    if warning:
+        print("  ВНИМАНИЕ:", warning)
     print("-" * 60)
     for p in res.params:
         mark = "OK  " if p.level == "ok" else ("WARN" if p.level == "warn" else "FAIL")
@@ -116,8 +133,9 @@ def main():
                     help="print machine-readable JSON (with --file/--dir)")
     ap.add_argument("--host", default="127.0.0.1", help="web service host")
     ap.add_argument("--port", type=int, default=8000, help="web service port")
-    ap.add_argument("--um-per-px", type=float, default=10.0,
-                    help="calibration, microns per pixel")
+    ap.add_argument("--um-per-px", type=_positive_float, default=None,
+                    help=f"calibration, microns per pixel "
+                         f"(default: {DEFAULT_UM_PER_PX:g}, marked as approximate)")
     args = ap.parse_args()
 
     if args.json and not (args.file or args.dir):
@@ -138,7 +156,8 @@ def main():
         if args.dir:
             ap.error("--gui does not support --dir")
         from ui import main as gui_main
-        gui_main(initial_file=args.file if args.gui else None)
+        gui_main(initial_file=args.file if args.gui else None,
+                 um_per_px=args.um_per_px)
         return 0
 
     paths = []

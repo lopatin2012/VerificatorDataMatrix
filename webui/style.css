@@ -83,7 +83,7 @@ main {
 #dropmsg[hidden] { display: none; }
 #dropmsg p { margin: 8px 0 12px; }
 .dropicon { font-size: 40px; }
-.controls { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.controls { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
 
 .btn {
   background: var(--accent); color: #fff; border: none;
@@ -97,10 +97,12 @@ main {
 .select { font-size: 13px; color: var(--muted); margin-left: 6px; }
 .toggle { font-size: 13px; color: var(--muted); margin-left: 6px; cursor: pointer; display: flex; align-items: center; gap: 4px; }
 .toggle input { cursor: pointer; }
-.select select {
+.select select,
+.select input {
   margin-left: 6px; padding: 6px 8px; border-radius: 6px;
   border: 1px solid #cfd8dc; font-size: 13px; background: #fff;
 }
+.select input { width: 92px; }
 
 .health { align-items: center; overflow-y: auto; }
 .health .block { width: 100%; }
