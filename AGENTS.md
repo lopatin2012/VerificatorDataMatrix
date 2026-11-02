@@ -202,7 +202,10 @@ in git, so still verify decode/geometry changes manually against
   pan, wheel to zoom at the cursor, Reset view, and fullscreen on the `.scene`
   card (`state.panX/panY` drive both drawImage and the overlay mapping).
   `analyze` uses XHR for a real upload percentage, then an indeterminate bar;
-  `PROCESS_TIPS` rotates Честный Знак hints, and the Товар tab has a `<details>`
+  `PROCESS_TIPS` is a list of `{kind, label, text}` entries (`site`/`cz`/`fact`)
+  rotated every 5 s with a colored badge — site capabilities, Честный Знак
+  info and DataMatrix facts; the drop zone also shows four `dropfeats`
+  capability chips. The Товар tab has a `<details>`
   help block. There is no server-side stage stream. History lives in the
   browser: IndexedDB `dm_verifier` / store `history`, up to 50 entries
   `{id, ts, thumb, payload, image (Blob), um, crpt, result_index, file_name}`;
@@ -222,7 +225,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.50`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.51`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.
