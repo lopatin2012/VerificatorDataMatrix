@@ -15,3 +15,7 @@ docs
 .ruff_cache
 *.pyc
 *.log
+AGENTS.md
+README.md
+deploy
+.github

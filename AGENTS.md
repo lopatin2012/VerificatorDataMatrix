@@ -47,12 +47,11 @@ typecheck, formatter, or codegen config — don't invent one.
 - `samples/`, `training/`, `models/`, `docs/` are `.gitignore`d and absent from
   this checkout (the owner's calibration set grows under `samples/new_codes/`).
   `docs/` holds CRPT API PDFs and must never be committed.
-- `test_image_codes/` has 12 real product-pack photos. It is UNTRACKED but not
-  `.gitignore`d, so a bare `git add .` stages it (only `.dockerignore` excludes
-  it). Use it for manual decode checks.
-- `webui/_report.pdf` is a stale 5.6 MB untracked leftover (current code writes
-  PDFs to a temp dir). Because `webui/` is served statically it is publicly
-  fetchable at `/_report.pdf`, and a bare `git add .` stages it — delete it.
+- `test_image_codes/` (12 real product-pack photos, absent from this checkout)
+  is `.gitignore`d, so `git add .` cannot stage customer packaging; it also
+  stays out of the Docker image. Use it for manual decode checks.
+- `webui/` is served statically: never write generated files there. The old
+  `webui/_report.pdf` leftover was deleted; PDFs go to `PDF_DIR` (temp).
 - Use `-X utf8` when piping Cyrillic output to files (console may mojibake).
 - `LICENSE` is MIT, Copyright (c) 2026 Maxim Lopatin; keep it and the README
   license section.
@@ -225,7 +224,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.51`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.52`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.

@@ -22,6 +22,8 @@ dist/
 
 # Sample photos
 samples/
+# Real product-pack photos used for manual checks (never commit customer packs)
+test_image_codes/
 
 # Training files and model weights
 training/
