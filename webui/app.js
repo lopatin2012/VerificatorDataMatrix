@@ -140,7 +140,6 @@ async function fetchVersion() {
     const r = await fetch("api/version");
     const j = await r.json();
     $("version").textContent = "v" + j.version;
-    $("appver").textContent = "DataMatrix Verifier v" + j.version;
   } catch (e) { /* server has no version endpoint yet */ }
 }
 
