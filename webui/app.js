@@ -16,6 +16,10 @@ const state = {
   crptCode: null,
   calibration: "",
   suppressClick: false,
+  lastFile: null,
+  lastFileName: "",
+  lastUm: "",
+  crptInfo: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -603,6 +607,7 @@ function setCrptStatus(text, color) {
 }
 
 function resetCrpt() {
+  state.crptInfo = null;
   setCrptStatus("Не проверено", "#78909c");
   const box = $("crptinfo");
   if (box) box.innerHTML = "";
@@ -627,11 +632,13 @@ function renderCrpt(info) {
   if (!box) return;
   box.innerHTML = "";
   if (!info || info.error || info.ok === false) {
+    state.crptInfo = null;
     setCrptStatus("Ошибка запроса", "#c62828");
     box.appendChild(crptRow("Ошибка",
       info && info.error ? info.error : "неизвестная ошибка"));
     return;
   }
+  state.crptInfo = info;
   if (info.found && info.check) {
     setCrptStatus("Найден, проверка пройдена", "#2e7d32");
   } else if (info.found) {
@@ -717,15 +724,170 @@ function renderReport(data) {
   $("reporttext").textContent = lines.join("\n");
 }
 
-// ------------------------------------------------------------- history
+// ------------------------------------------------------------- history (IndexedDB)
+
+const HISTORY_DB = "dm_verifier";
+const HISTORY_STORE = "history";
+const HISTORY_LIMIT = 50;
+let _historyDb = null;
+
+function openHistoryDb() {
+  if (!("indexedDB" in window)) {
+    return Promise.reject(new Error("IndexedDB недоступен"));
+  }
+  if (_historyDb) return _historyDb;
+  _historyDb = new Promise((resolve, reject) => {
+    const req = indexedDB.open(HISTORY_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(HISTORY_STORE)) {
+        db.createObjectStore(HISTORY_STORE, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return _historyDb;
+}
+
+async function historyAll() {
+  try {
+    const db = await openHistoryDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(HISTORY_STORE, "readonly");
+      const req = tx.objectStore(HISTORY_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    return (state.history || []).slice();
+  }
+}
+
+async function historyPut(entry) {
+  state.history = [entry, ...(state.history || [])
+    .filter((e) => e.id !== entry.id)]
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, HISTORY_LIMIT);
+  try {
+    const db = await openHistoryDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(HISTORY_STORE, "readwrite");
+      tx.objectStore(HISTORY_STORE).put(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* fall back to the in-memory list */ }
+}
+
+async function historyDelete(id) {
+  state.history = (state.history || []).filter((e) => e.id !== id);
+  try {
+    const db = await openHistoryDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(HISTORY_STORE, "readwrite");
+      tx.objectStore(HISTORY_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* ignore */ }
+}
+
+async function historyClearAll() {
+  state.history = [];
+  try {
+    const db = await openHistoryDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(HISTORY_STORE, "readwrite");
+      tx.objectStore(HISTORY_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* ignore */ }
+}
+
+async function historyTrim() {
+  const all = await historyAll();
+  all.sort((a, b) => b.ts - a.ts);
+  for (const entry of all.slice(HISTORY_LIMIT)) {
+    await historyDelete(entry.id);
+  }
+}
+
+function makeThumb(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const W = 176, H = 120;
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#f1f5f9";
+      ctx.fillRect(0, 0, W, H);
+      const scale = Math.min(W / img.width, H / img.height);
+      const w = img.width * scale, h = img.height * scale;
+      ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.75));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve("");
+    };
+    img.src = url;
+  });
+}
+
+async function saveHistory(file, results, um, replaceId) {
+  if (!file || !results || !results.length) return;
+  if (replaceId) await historyDelete(replaceId);
+  const thumb = await makeThumb(file);
+  const base = Date.now() / 1000;
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const entry = {
+      id: result.result_id || ("r" + base + i),
+      ts: base + i * 0.001,
+      thumb,
+      payload: result,
+      image: file,
+      um: um || "",
+      crpt: (state.crptInfo && state.crptCode &&
+        (result.content_raw || result.content) === state.crptCode)
+        ? state.crptInfo : null,
+      result_index: i,
+      file_name: file.name || state.lastFileName || "изображение",
+    };
+    await historyPut(entry);
+  }
+  await historyTrim();
+  await loadHistory();
+}
 
 async function loadHistory() {
-  try {
-    const r = await fetch("api/history");
-    const j = await r.json();
-    state.history = j.items || [];
-  } catch (e) { return; }
+  const all = await historyAll();
+  state.history = all.sort((a, b) => b.ts - a.ts);
   renderHistory();
+}
+
+function historyTime(ts) {
+  return new Date(ts * 1000).toLocaleString("ru-RU");
+}
+
+function historyGs1(d) {
+  if (d.gs1_status === "warn") {
+    return (d.gs1_warnings || []).length + " предупр.";
+  }
+  if (d.gs1_status === "ok") return "OK";
+  return "—";
+}
+
+function historyQuality(d) {
+  if (d.quality_ok) return "ГОДЕН";
+  if (d.read_ok) return "БРАК";
+  return "—";
 }
 
 function renderHistory() {
@@ -733,23 +895,24 @@ function renderHistory() {
   if (!strip) return;
   strip.innerHTML = "";
   const items = state.history || [];
-  const ok = items.filter(it => it.good).length;
+  const ok = items.filter((it) => it.payload && it.payload.good).length;
   $("history").textContent = "Проанализировано: " + items.length + " кодов. " +
     ok + " - OK, " + (items.length - ok) + " - Брак";
   const countEl = $("histcount");
   if (countEl) countEl.textContent = items.length ? String(items.length) : "";
   const activeId = state.result && state.result.result_id;
-  items.forEach(it => {
+  items.forEach((it) => {
+    const d = it.payload || {};
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "histitem " + (it.good ? "ok" : "bad") +
-      (it.result_id === activeId ? " active" : "");
-    const read = it.read_ok ? "Чтение: OK" : "Чтение: ошибка";
-    const qual = it.quality_ok ? "ГОДЕН" : (it.read_ok ? "БРАК" : "—");
+    btn.className = "histitem " + (d.good ? "ok" : "bad") +
+      (it.id === activeId ? " active" : "");
+    const read = d.read_ok ? "Чтение: OK" : "Чтение: ошибка";
+    const qual = historyQuality(d);
     btn.title = read + " · Качество: " + qual + " · " +
-      (it.overall_class || "") + " · " + (it.content || "(не декодировано)");
+      (d.overall_class || "") + " · " + (d.content || "(не декодировано)");
     const img = document.createElement("img");
-    img.src = it.thumb;
+    img.src = it.thumb || "";
     img.alt = "";
     const cap = document.createElement("span");
     cap.className = "histcap";
@@ -757,23 +920,145 @@ function renderHistory() {
       ? new Date(it.ts * 1000).toLocaleTimeString("ru-RU",
           { hour: "2-digit", minute: "2-digit" })
       : "";
-    cap.textContent = (it.good ? "OK" : "БРАК") + " · " + it.score +
+    cap.textContent = (d.good ? "OK" : "БРАК") + " · " + (d.score ?? "—") +
       (time ? " · " + time : "");
     btn.appendChild(img);
     btn.appendChild(cap);
-    btn.addEventListener("click", () => loadResult(it.result_id));
+    btn.addEventListener("click", () => loadHistoryEntry(it));
     strip.appendChild(btn);
   });
 }
 
-async function loadResult(rid) {
+function loadHistoryEntry(entry) {
+  if (!entry || !entry.image) return;
+  state.lastFile = entry.image;
+  state.lastFileName = entry.file_name || "изображение";
+  state.lastUm = entry.um || "";
+  state.calibration = state.lastUm;
+  const umInput = $("umpp");
+  if (umInput) umInput.value = state.lastUm;
+  const nameEl = $("filename");
+  if (nameEl) nameEl.textContent = entry.file_name || "изображение";
+  state.crptInfo = entry.crpt || null;
+  state.crptCode = entry.crpt
+    ? (entry.payload.content_raw || entry.payload.content || null)
+    : null;
+  const url = URL.createObjectURL(entry.image);
+  setImage(url);
+  state.results = [entry.payload];
+  state.current = 0;
+  render({ results: [entry.payload], crpt: entry.crpt || null });
+}
+
+function historyRow(entry) {
+  const d = entry.payload || {};
+  return {
+    ts_text: historyTime(entry.ts),
+    validation: d.validation,
+    overall_class: d.overall_class,
+    score: d.score,
+    content: d.content,
+    good: d.good,
+    gs1_status: d.gs1_status,
+    gs1_warnings: d.gs1_warnings || [],
+    read_ok: d.read_ok,
+    quality_ok: d.quality_ok,
+  };
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  if (/[;"\r\n]/.test(text)) return '"' + text.replace(/"/g, '""') + '"';
+  return text;
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function historyCsv() {
+  if (!state.history.length) {
+    $("validation").textContent = "История пуста";
+    $("validation").style.color = "#c62828";
+    return;
+  }
+  const lines = [[
+    "Время", "Чтение", "GS1", "Качество", "Класс", "Оценка",
+    "Символ", "Содержимое", "Калибровка", "Данные GS1",
+  ].map(csvCell).join(";")];
+  state.history.forEach((entry) => {
+    const d = entry.payload || {};
+    const elems = (d.elements || []).map((el) =>
+      (el.label || el.name) + "=" + (el.display_value || el.value)).join("; ");
+    lines.push([
+      historyTime(entry.ts),
+      d.read_ok ? "OK" : "ошибка",
+      historyGs1(d),
+      historyQuality(d),
+      d.overall_class || "",
+      d.score ?? "",
+      d.symbol_size || "",
+      d.content || "",
+      d.calibration_note || "",
+      elems,
+    ].map(csvCell).join(";"));
+  });
+  downloadBlob(new Blob(["\ufeff" + lines.join("\r\n")],
+    { type: "text/csv;charset=utf-8" }), "history.csv");
+}
+
+function historyTxt() {
+  const lines = state.history.map((entry) => {
+    const d = entry.payload || {};
+    return (d.content_plain || d.content || "")
+      .replace(/[\r\n]+/g, " ");
+  }).filter(Boolean);
+  if (!lines.length) {
+    $("validation").textContent = "История пуста";
+    $("validation").style.color = "#c62828";
+    return;
+  }
+  downloadBlob(new Blob([lines.join("\r\n") + "\r\n"],
+    { type: "text/plain;charset=utf-8" }), "history.txt");
+}
+
+async function historyPdf() {
+  if (!state.history.length) {
+    $("validation").textContent = "История пуста";
+    $("validation").style.color = "#c62828";
+    return;
+  }
   try {
-    const r = await fetch("api/result/" + rid);
-    if (!r.ok) return;
-    const data = await r.json();
-    setImage(data.image);
-    render(data);
-  } catch (e) { /* ignore */ }
+    const resp = await fetch("api/history.pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: state.history.map(historyRow) }),
+    });
+    if (!resp.ok) {
+      let msg = "Ошибка PDF";
+      try { msg = (await resp.json()).error || msg; } catch (e) { /* ignore */ }
+      $("validation").textContent = msg;
+      $("validation").style.color = "#c62828";
+      return;
+    }
+    downloadBlob(await resp.blob(), "history.pdf");
+  } catch (e) {
+    $("validation").textContent = "Ошибка сети: " + e;
+    $("validation").style.color = "#c62828";
+  }
+}
+
+async function updateHistoryCrpt(id, info) {
+  if (!id) return;
+  const entry = state.history.find((e) => e.id === id);
+  if (!entry) return;
+  entry.crpt = info;
+  await historyPut(entry);
 }
 
 // ------------------------------------------------------------- analysis
@@ -789,18 +1074,28 @@ function setImage(dataUrl) {
     $("dropmsg").hidden = true;
     $("dropzone").classList.add("has-image");
     drawScene();
+    if (dataUrl.startsWith("blob:")) URL.revokeObjectURL(dataUrl);
   };
   img.src = dataUrl;
 }
 
-function analyze(file) {
+function analyze(file, options = {}) {
   if (window.__stopCamera) window.__stopCamera();
   const fd = new FormData();
   fd.append("image", file);
+  const fileName = (file && file.name) || options.fileName ||
+    state.lastFileName || "изображение";
+  state.lastFileName = fileName;
   const nameEl = $("filename");
-  if (nameEl) nameEl.textContent = file && file.name ? file.name : "изображение";
+  if (nameEl) nameEl.textContent = fileName;
   const um = ($("umpp").value || "").trim();
   if (um) fd.append("um_per_px", um.replace(",", "."));
+  state.lastFile = file;
+  state.lastUm = um;
+  if (!options.replaceId) {
+    state.crptInfo = null;
+    state.crptCode = null;
+  }
   $("validation").textContent = "Анализ...";
   $("validation").style.color = "#f9a825";
   startProgress("Загрузка изображения...");
@@ -825,7 +1120,11 @@ function analyze(file) {
     }
     setImage(data.image);
     render(data);
-    loadHistory();
+    if (data.results && data.results.length) {
+      saveHistory(file, data.results, um, options.replaceId);
+    } else {
+      loadHistory();
+    }
   };
   xhr.onerror = () => {
     stopProgress();
@@ -935,48 +1234,13 @@ function saveCalibration(value) {
   } catch (e) { /* storage disabled */ }
 }
 
-async function reanalyzeCurrent() {
+function reanalyzeCurrent() {
+  if (!state.lastFile) return;
   const cur = state.results[state.current];
-  if (!cur || !cur.result_id) return;
-  const rid = cur.result_id;
-  const um = ($("umpp").value || "").trim();
-  $("validation").textContent = "Пересчёт с калибровкой...";
-  $("validation").style.color = "#f9a825";
-  startProgress("Пересчёт с новой калибровкой...");
-  indeterminateProgress("Пересчёт с новой калибровкой...");
-  try {
-    const resp = await fetch("api/reanalyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ result_id: rid, um_per_px: um || null }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      stopProgress();
-      $("validation").textContent = data.error || "Ошибка пересчёта";
-      $("validation").style.color = "#c62828";
-      return;
-    }
-    if (!data.image) {
-      stopProgress();
-      $("validation").textContent = data.error || "Код не найден";
-      $("validation").style.color = "#c62828";
-      return;
-    }
-    const now = state.results[state.current];
-    if (!now || now.result_id !== rid) {
-      stopProgress();
-      return;
-    }
-    stopProgress();
-    setImage(data.image);
-    render(data);
-    loadHistory();
-  } catch (e) {
-    stopProgress();
-    $("validation").textContent = "Ошибка сети: " + e;
-    $("validation").style.color = "#c62828";
-  }
+  analyze(state.lastFile, {
+    replaceId: cur ? cur.result_id : null,
+    fileName: state.lastFileName,
+  });
 }
 
 function wireCalibration() {
@@ -1065,7 +1329,8 @@ function wireCrpt() {
   if (!btn) return;
   btn.addEventListener("click", async () => {
     const cur = state.results[state.current];
-    if (!cur || !cur.result_id) return;
+    const code = cur && (cur.content_raw || cur.content);
+    if (!code) return;
     const rid = cur.result_id;
     btn.disabled = true;
     setCrptStatus("Запрос в Честный знак...", "#f9a825");
@@ -1075,7 +1340,7 @@ function wireCrpt() {
       const resp = await fetch("api/crpt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ result_id: rid }),
+        body: JSON.stringify({ code: code }),
       });
       let data = {};
       try { data = await resp.json(); } catch (e) { /* non-JSON */ }
@@ -1086,7 +1351,10 @@ function wireCrpt() {
       // Ignore a late response if the user switched to another code.
       const now = state.results[state.current];
       if (!now || now.result_id !== rid) return;
+      state.crptCode = code;
       renderCrpt(data);
+      state.crptInfo = data;
+      updateHistoryCrpt(rid, data);
     } catch (e) {
       renderCrpt({ ok: false, error: "Ошибка сети: " + e });
     } finally {
@@ -1222,43 +1490,49 @@ function wireControls() {
       copyText(state.result.content_hri).then(ok => flashCopy(e.target, ok));
     }
   });
-  $("pdfbtn").addEventListener("click", async () => {
+  $("pdfbtn").addEventListener("click", async (e) => {
     const cur = state.results[state.current];
-    if (!cur || !cur.result_id) return;
-    const resp = await fetch("api/pdf", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ result_id: cur.result_id }),
-    });
-    if (!resp.ok) {
-      let msg = "Ошибка PDF";
-      try { msg = (await resp.json()).error || msg; } catch (e) { /* non-JSON body */ }
-      $("validation").textContent = msg;
+    if (!cur || !state.lastFile) return;
+    const btn = e.target;
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append("image", state.lastFile, state.lastFile.name || "image.jpg");
+    const um = ($("umpp").value || "").trim();
+    if (um) fd.append("um_per_px", um.replace(",", "."));
+    fd.append("result_index", String(state.current));
+    if (cur.content_raw) fd.append("code", cur.content_raw);
+    if (state.crptInfo) fd.append("crpt", JSON.stringify(state.crptInfo));
+    try {
+      const resp = await fetch("api/pdf", { method: "POST", body: fd });
+      if (!resp.ok) {
+        let msg = "Ошибка PDF";
+        try { msg = (await resp.json()).error || msg; } catch (err) { /* ignore */ }
+        $("validation").textContent = msg;
+        $("validation").style.color = "#c62828";
+        return;
+      }
+      downloadBlob(await resp.blob(), "verification.pdf");
+    } catch (err) {
+      $("validation").textContent = "Ошибка сети: " + err;
       $("validation").style.color = "#c62828";
-      return;
+    } finally {
+      btn.disabled = false;
     }
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "verification_" + state.result.result_id + ".pdf";
-    a.click();
-    URL.revokeObjectURL(url);
   });
 }
 
 function wireHistoryExports() {
   const csv = $("csvbtn");
-  if (csv) csv.addEventListener("click", () => { window.location = "api/history.csv"; });
+  if (csv) csv.addEventListener("click", historyCsv);
   const txt = $("txtbtn");
-  if (txt) txt.addEventListener("click", () => { window.location = "api/history.txt"; });
+  if (txt) txt.addEventListener("click", historyTxt);
   const pdf = $("hpdfbtn");
-  if (pdf) pdf.addEventListener("click", () => { window.location = "api/history.pdf"; });
+  if (pdf) pdf.addEventListener("click", historyPdf);
   const clear = $("clearhist");
   if (clear) clear.addEventListener("click", async () => {
-    if (!confirm("Очистить историю проверок?")) return;
-    try { await fetch("api/history/clear", { method: "POST" }); } catch (e) { /* ignore */ }
-    loadHistory();
+    if (!confirm("Очистить историю проверок в этом браузере?")) return;
+    await historyClearAll();
+    renderHistory();
   });
 }
 

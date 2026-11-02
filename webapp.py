@@ -4,19 +4,16 @@ Deploy as a service:
     python webapp.py [--host 0.0.0.0] [--port 8010]
 """
 import base64
-import csv
-import datetime
 import io
+import json
 import os
 import tempfile
 import threading
-import time
 import uuid
 
 import cv2
 import numpy as np
-from flask import (Flask, Response, jsonify, request, send_file,
-                   send_from_directory)
+from flask import (Flask, jsonify, request, send_file, send_from_directory)
 from PIL import Image
 
 import crpt
@@ -42,12 +39,11 @@ def _no_cache(resp):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 
+# Analysis is CPU-heavy; keep one at a time per process. There is no
+# server-side result/history cache: the browser stores its own history.
 ANALYZE_LOCK = threading.Lock()
-RESULTS = {}          # id -> {res, img, payload, thumb, ts}
-RESULTS_ORDER = []    # LRU
-RESULTS_MAX = 50
 
-# Opt-in Chestny Znak lookups (only when /api/crpt is called explicitly).
+# Opt-in Chestny Znak product cache (keyed by marking code, not user history).
 CRPT_LOCK = threading.Lock()
 CRPT_CACHE = {}
 CRPT_CACHE_MAX = 100
@@ -58,50 +54,6 @@ def _image_data_url(img, quality=85):
     buf = io.BytesIO()
     pil.save(buf, format="JPEG", quality=quality)
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
-
-
-def _thumb_data_url(img, res, good):
-    disp = img.copy()
-    if res.corner_points is not None:
-        pts = res.corner_points.astype(int)
-        x0, y0 = int(pts[:, 0].min()), int(pts[:, 1].min())
-        x1, y1 = int(pts[:, 0].max()), int(pts[:, 1].max())
-        m = max(6, int(0.08 * max(x1 - x0, y1 - y0)))
-        color = (46, 125, 50) if good else (40, 40, 198)
-        cv2.rectangle(disp, (x0 - m, y0 - m), (x1 + m, y1 + m), color, 3)
-    pil = Image.fromarray(cv2.cvtColor(disp, cv2.COLOR_BGR2RGB))
-    pil.thumbnail((176, 120))
-    buf = io.BytesIO()
-    pil.save(buf, format="JPEG", quality=75)
-    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
-
-
-def _history_items():
-    """Newest-first list of lightweight history entries."""
-    items = []
-    for rid in reversed(RESULTS_ORDER):
-        e = RESULTS.get(rid)
-        if not e:
-            continue
-        d = e["payload"]
-        items.append({
-            "result_id": rid,
-            "thumb": e["thumb"],
-            "ts": e["ts"],
-            "good": d["good"],
-            "score": d["score"],
-            "color": d["color"],
-            "validation": d["validation"],
-            "read_ok": d.get("read_ok", d["validation"] == "OK"),
-            "gs1_status": d.get("gs1_status", "none"),
-            "quality_ok": d.get("quality_ok", d["good"]),
-            "overall_class": d["overall_class"],
-            "content": d["content"],
-            "symbol_size": d["symbol_size"],
-            "elements": [{"name": el["name"], "value": el["value"]}
-                         for el in d["elements"]],
-        })
-    return items
 
 
 @app.get("/")
@@ -152,25 +104,13 @@ def _parse_calibration(raw):
     return um, None
 
 
-def _store_results(img, results):
-    """Store analyzed results and build the /api/analyze payload."""
-    payload = {"image": "", "results": []}
+def _payload_for_results(img, results):
+    """Build the response; the client keeps the only copy of the history."""
+    payload = {"image": _image_data_url(img), "results": []}
     for res in results:
-        rid = uuid.uuid4().hex[:12]
         d = to_dict(res)
-        d["result_id"] = rid
-        with ANALYZE_LOCK:
-            RESULTS[rid] = {
-                "res": res, "img": img, "payload": d,
-                "thumb": _thumb_data_url(img, res, d["good"]),
-                "ts": time.time(),
-            }
-            RESULTS_ORDER.append(rid)
-            if len(RESULTS_ORDER) > RESULTS_MAX:
-                old = RESULTS_ORDER.pop(0)
-                RESULTS.pop(old, None)
+        d["result_id"] = uuid.uuid4().hex[:12]
         payload["results"].append(d)
-    payload["image"] = _image_data_url(img)
     return payload
 
 
@@ -182,7 +122,7 @@ def _analyze_payload(img, um):
         return None, f"Ошибка анализа: {exc}"
     if not results:
         return {"error": "Код не найден", "image": _image_data_url(img)}, None
-    return _store_results(img, results), None
+    return _payload_for_results(img, results), None
 
 
 @app.post("/api/analyze")
@@ -203,74 +143,17 @@ def api_analyze():
     return jsonify(payload)
 
 
-@app.post("/api/reanalyze")
-def api_reanalyze():
-    """Re-run analysis of a stored image with a new calibration."""
-    data = request.get_json(silent=True) or {}
-    rid = data.get("result_id")
-    with ANALYZE_LOCK:
-        entry = RESULTS.get(rid)
-    if entry is None:
-        return jsonify({"error": "Результат не найден (истёк)"}), 404
-    um, error = _parse_calibration(data.get("um_per_px"))
-    if error:
-        return jsonify({"error": error}), 400
-    payload, error = _analyze_payload(entry["img"], um)
-    if error:
-        return jsonify({"error": error}), 500
-    return jsonify(payload)
-
-
-@app.get("/api/history")
-def api_history():
-    with ANALYZE_LOCK:
-        items = _history_items()
-    return jsonify({"items": items})
-
-
-@app.post("/api/history/clear")
-def api_history_clear():
-    with ANALYZE_LOCK:
-        RESULTS.clear()
-        RESULTS_ORDER.clear()
-    return jsonify({"ok": True})
-
-
-@app.get("/api/result/<rid>")
-def api_result(rid):
-    with ANALYZE_LOCK:
-        entry = RESULTS.get(rid)
-    if entry is None:
-        return jsonify({"error": "Результат не найден (истёк)"}), 404
-    return jsonify({"image": _image_data_url(entry["img"]),
-                    "results": [entry["payload"]],
-                    "crpt": entry.get("crpt")})
-
-
 @app.post("/api/crpt")
 def api_crpt():
     """Explicit, opt-in product lookup in Chestny Znak (no auth)."""
     data = request.get_json(silent=True) or {}
-    rid = data.get("result_id")
     code = str(data.get("code") or "").strip(" \t\r\n")
-    if rid:
-        with ANALYZE_LOCK:
-            entry = RESULTS.get(rid)
-        if entry is None:
-            return jsonify({"error": "Результат не найден (истёк)"}), 404
-        code = (entry["res"].content_raw or entry["res"].content or
-                code).strip(" \t\r\n")
     if not code:
         return jsonify({"error": "Нет кода для проверки"}), 400
 
     with CRPT_LOCK:
         cached = CRPT_CACHE.get(code)
     if cached is not None:
-        if rid:
-            with ANALYZE_LOCK:
-                entry = RESULTS.get(rid)
-                if entry is not None:
-                    entry["crpt"] = cached
         return jsonify(cached)
 
     try:
@@ -282,83 +165,20 @@ def api_crpt():
         CRPT_CACHE[code] = public
         if len(CRPT_CACHE) > CRPT_CACHE_MAX:
             CRPT_CACHE.pop(next(iter(CRPT_CACHE)))
-    if rid:
-        with ANALYZE_LOCK:
-            entry = RESULTS.get(rid)
-            if entry is not None:
-                entry["crpt"] = public
     return jsonify(public)
 
 
-def _export_rows():
-    """Newest-first payload dicts (each with a formatted `ts_text`)."""
-    rows = []
-    with ANALYZE_LOCK:
-        entries = [RESULTS[r] for r in reversed(RESULTS_ORDER) if r in RESULTS]
-    for e in entries:
-        d = dict(e["payload"])
-        d["ts_text"] = datetime.datetime.fromtimestamp(e["ts"]).strftime(
-            "%d.%m.%Y %H:%M:%S")
-        rows.append(d)
-    return rows
-
-
-@app.get("/api/history.csv")
-def api_history_csv():
-    rows = _export_rows()
-    out = io.StringIO()
-    w = csv.writer(out, delimiter=";")
-    w.writerow(["Время", "Чтение", "GS1", "Качество", "Класс", "Оценка",
-                "Символ", "Содержимое", "Калибровка", "Данные GS1"])
-    for d in rows:
-        elems = "; ".join(
-            f'{el.get("label", el["name"])}='
-            f'{el.get("display_value", el["value"])}'
-            for el in d.get("elements", []))
-        gs1 = {"ok": "OK",
-               "warn": f"{len(d.get('gs1_warnings', []))} предупр.",
-               "none": "—"}.get(d.get("gs1_status"), "—")
-        quality = ("ГОДЕН" if d.get("quality_ok")
-                   else ("БРАК" if d.get("read_ok") else "—"))
-        w.writerow([d["ts_text"], "OK" if d.get("read_ok") else "ошибка",
-                    gs1, quality, d["overall_class"] or "", d["score"],
-                    d["symbol_size"] or "", d["content"] or "",
-                    d.get("calibration_note", ""), elems])
-    data = "\ufeff" + out.getvalue()  # BOM so Excel reads UTF-8
-    return Response(
-        data, mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=history.csv"})
-
-
-def _history_txt_lines():
-    """Decoded code contents, one per line, newest first.
-
-    Uses the copy-friendly form (no AI parens, real GS `\\x1d` separators)
-    and flattens any embedded newlines so one code stays on one line.
-    """
-    lines = []
-    for d in _export_rows():
-        text = d.get("content_plain") or d.get("content") or ""
-        text = text.replace("\r", " ").replace("\n", " ")
-        if text:
-            lines.append(text)
-    return lines
-
-
-@app.get("/api/history.txt")
-def api_history_txt():
-    body = "".join(line + "\r\n" for line in _history_txt_lines())
-    return Response(
-        body, content_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=history.txt"})
-
-
-@app.get("/api/history.pdf")
+@app.post("/api/history.pdf")
 def api_history_pdf():
-    rows = _export_rows()
+    """Build a history summary from client-supplied rows (no server state)."""
+    data = request.get_json(silent=True) or {}
+    rows = data.get("items")
+    if not isinstance(rows, list) or not rows:
+        return jsonify({"error": "История пуста"}), 400
+    rows = [row for row in rows if isinstance(row, dict)][:500]
     if not rows:
-        return jsonify({"error": "История пуста"}), 404
-    pdf_path = os.path.join(PDF_DIR, f"history_{int(time.time() * 1000)}.pdf")
+        return jsonify({"error": "История пуста"}), 400
+    pdf_path = os.path.join(PDF_DIR, f"history_{uuid.uuid4().hex}.pdf")
     try:
         build_history_pdf(rows, pdf_path)
     except Exception as exc:
@@ -370,20 +190,50 @@ def api_history_pdf():
 
 @app.post("/api/pdf")
 def api_pdf():
-    data = request.get_json(silent=True) or {}
-    rid = data.get("result_id")
-    with ANALYZE_LOCK:
-        entry = RESULTS.get(rid)
-    if entry is None:
-        return jsonify({"error": "Результат не найден (истёк)"}), 404
-    res, img = entry["res"], entry["img"]
-    pdf_path = os.path.join(PDF_DIR, f"report_{rid}.pdf")
+    """Build a report from the uploaded image, so the server keeps no history."""
+    f = request.files.get("image")
+    if f is None:
+        return jsonify({"error": "Изображение не получено"}), 400
+    img = _decode_image(f.read())
+    if img is None or img.size == 0:
+        return jsonify({"error": "Не удалось прочитать изображение"}), 400
+    um, error = _parse_calibration(request.form.get("um_per_px"))
+    if error:
+        return jsonify({"error": error}), 400
+
+    crpt_info = None
+    raw_crpt = request.form.get("crpt")
+    if raw_crpt:
+        try:
+            crpt_info = json.loads(raw_crpt)
+        except (TypeError, ValueError):
+            crpt_info = None
+        if not isinstance(crpt_info, dict):
+            crpt_info = None
+
     try:
-        build_pdf(res, img, pdf_path, crpt_info=entry.get("crpt"))
+        with ANALYZE_LOCK:
+            results = analyze_all(img, um_per_px=um)
+    except Exception as exc:
+        return jsonify({"error": f"Ошибка анализа: {exc}"}), 500
+    if not results:
+        return jsonify({"error": "Код не найден"}), 404
+    index = request.form.get("result_index", type=int, default=0) or 0
+    expected = request.form.get("code") or ""
+    if expected:
+        for i, result in enumerate(results):
+            if (result.content_raw == expected
+                    or result.content == expected):
+                index = i
+                break
+    index = max(0, min(len(results) - 1, index))
+    pdf_path = os.path.join(PDF_DIR, f"report_{uuid.uuid4().hex}.pdf")
+    try:
+        build_pdf(results[index], img, pdf_path, crpt_info=crpt_info)
     except Exception as exc:
         return jsonify({"error": f"Ошибка формирования PDF: {exc}"}), 500
     return send_file(pdf_path, as_attachment=True,
-                     download_name=f"verification_{rid}.pdf",
+                     download_name="verification.pdf",
                      mimetype="application/pdf")
 
 

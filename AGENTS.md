@@ -171,23 +171,20 @@ in git, so still verify decode/geometry changes manually against
   stripped): `plain_content()` feeds `content_raw`/`content_plain`. The web UI
   copies the raw string and only renders `[GS]` on screen. Don't strip `\x1d` —
   it is required to re-parse variable-length AIs.
-- `webapp.py` + `webui/` — Flask/waitress. REST: `/api/analyze` (returns
+- `webapp.py` + `webui/` — Flask/waitress. **The server keeps no history or
+  uploaded images** (so no auth is needed): REST is `/api/analyze` (returns
   `{image, results:[...]}`, one `result_id` per code; with no code it still
-  returns `image` plus `error`), `/api/history`, `/api/history/clear`,
-  `/api/result/<id>`, `/api/history.csv`, `/api/history.txt`,
-  `/api/history.pdf`, `/api/pdf`, `/api/version`, `/api/reanalyze` (stored image
-  + new `um_per_px` → new result ids), `/api/crpt` (opt-in product lookup, 200
-  with normalized data, 400/404/502 on error; result cached and attached to the
-  history entry so `/api/result` and the PDF can reuse it).
-  Entries are an in-memory LRU of 50
-  (`{res, img, payload, thumb, ts, crpt?}`), so ids 404 once evicted and
-  history dies with the process. `history.txt` is one decoded code per line
-  (`content_plain`, real GS separators, CRLF); undecoded entries are skipped.
-  `/api/analyze` also accepts an optional `um_per_px` form field (comma or dot,
+  returns `image` plus `error`), `/api/pdf` (multipart image + `um_per_px` +
+  `result_index`/`code` + optional `crpt` JSON → re-runs `analyze_all` and
+  builds the report), `/api/history.pdf` (POST `{items:[row,...]}` from the
+  client, max 500 rows), `/api/crpt` (opt-in product lookup by `code`, 200
+  with normalized data, 400/404/502 on error; normalized result cached in
+  `CRPT_CACHE` only), `/api/version`. Removed on purpose: `/api/history*`,
+  `/api/result/<id>`, `/api/reanalyze`.
+  `/api/analyze` accepts an optional `um_per_px` form field (comma or dot,
   must be > 0; invalid values return 400) and stores calibration fields in the
-  payload; the calibration input is persisted in `localStorage`. `history.csv`
-  has separate `Чтение`/`GS1`/`Качество` and `Калибровка` columns, and GS1
-  element values use `label`/`display_value`. The UI has a HRI copy button and
+  payload; the calibration input is persisted in `localStorage`. `analyze_all`
+  runs under `ANALYZE_LOCK` (one at a time). The UI has a HRI copy button and
   chips built with `textContent` (never innerHTML for barcode data). Upload cap
   is 25 MB (`MAX_CONTENT_LENGTH`); a 413
   returns JSON. PDFs go to `PDF_DIR` (a temp dir), never `webui/`.
@@ -202,11 +199,15 @@ in git, so still verify decode/geometry changes manually against
   card (`state.panX/panY` drive both drawImage and the overlay mapping).
   `analyze` uses XHR for a real upload percentage, then an indeterminate bar;
   `PROCESS_TIPS` rotates Честный Знак hints, and the Товар tab has a `<details>`
-  help block. There is no server-side stage stream. On wide screens the page is
+  help block. There is no server-side stage stream. History lives in the
+  browser: IndexedDB `dm_verifier` / store `history`, up to 50 entries
+  `{id, ts, thumb, payload, image (Blob), um, crpt, result_index, file_name}`;
+  CSV/TXT are built in JS, history PDF posts those rows to `/api/history.pdf`.
+  `state.lastFile`/`lastFileName` keep the current Blob so `/api/pdf` and
+  re-analysis (including calibration changes, which just call `analyze` again
+  with `replaceId`) work without server state. On wide screens the page is
   `100vh` with no body scroll; the health/diag cards scroll internally. At
-  <=1300px it becomes a single scrolling column on purpose. Calibration changes
-  (manual field or the X-dim dialog) call `/api/reanalyze` on the current result
-  and update the view without re-uploading; the dialog uses
+  <=1300px it becomes a single scrolling column on purpose; the dialog uses
   `result.module_px_x`.
 - `report.py` — `build_pdf` is used by the web service; it prints calibration
   (red warning + disclaimer), separates «Чтение: OK» from the quality verdict,
@@ -217,7 +218,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.48`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.49`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.
@@ -245,7 +246,8 @@ PDF reports work on Linux (Windows fonts are tried first).
 - Local samples `G0_5`, `G1_1`, `G1_2`, `G_ERROR_1`, `G_ERROR_3` and
   `samples/new_codes/G_ERROR_10` decode via no path (only `G_ERROR_3` reaches
   zxing, with a ChecksumError).
-- Web history is in-memory only; `--web` has no auth (localhost by default).
+- Web history is browser-only (IndexedDB), so clearing site data loses it;
+  `--web` has no auth (localhost by default) and stores nothing about uploads.
 
 ## Gotchas
 
