@@ -1,4 +1,4 @@
-# Build a lightweight standalone exe into dist\ (single file, no torch).
+# Build a lightweight standalone exe (web + CLI) into dist\ (no torch).
 # Run from the repo root:  .\build.ps1
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot

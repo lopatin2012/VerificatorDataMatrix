@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for a lightweight standalone build.
 
-Single-file exe with the GUI / CLI / web entry point. The optional neural-net
+Single-file exe with the web / CLI entry point. The optional neural-net
 locator is excluded (torch is not bundled); `core/nn_locator.py` catches the
 ImportError, so the app runs fine without it.
 """
@@ -20,6 +20,7 @@ for pkg in ("zxingcpp", "reportlab"):
 
 excludes = [
     "torch", "torchvision", "torchaudio", "training",
+    "tkinter", "_tkinter", "PIL.ImageTk",
     "matplotlib", "scipy", "pandas", "IPython", "notebook",
     "PyQt5", "PyQt6", "PySide2", "PySide6", "pytest",
 ]

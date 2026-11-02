@@ -8,99 +8,143 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
+  <header class="topbar">
     <div class="brand">
       <div class="logo">DM</div>
-      <div>
+      <div class="brandtext">
         <h1>DataMatrix Verifier</h1>
-        <span id="version" class="muted"></span>
+        <p>Проверка качества печати GS1 DataMatrix</p>
       </div>
+    </div>
+    <div class="topmeta">
+      <span id="version" class="versionchip"></span>
     </div>
   </header>
 
   <main>
     <section class="card scene">
-      <div class="card-head"><span class="bar"></span>Сцена</div>
+      <div class="card-head">
+        <span class="bar"></span>
+        <span class="card-title">Сцена</span>
+        <span id="filename" class="filechip">изображение не выбрано</span>
+      </div>
       <div id="dropzone" class="dropzone">
         <input type="file" id="file" accept="image/*" hidden>
         <canvas id="scene" width="800" height="600"></canvas>
+        <video id="video" autoplay playsinline hidden></video>
         <div id="dropmsg">
           <div class="dropicon">⇪</div>
-          <p>Перетащите изображение или нажмите для выбора</p>
-          <button id="cambtn" class="btn" type="button">📷 Проверить DM</button>
-          <video id="video" autoplay playsinline hidden></video>
+          <h2>Перетащите изображение</h2>
+          <p>JPG, PNG, BMP или TIFF · или снимите код камерой</p>
+          <div class="dropactions">
+            <button id="pickbtn" class="btn" type="button">Выбрать файл</button>
+          </div>
+          <p class="dropnote">или нажмите «Камера» ниже</p>
         </div>
       </div>
       <div class="controls">
-        <button class="btn small" id="zoomout" type="button">−</button>
-        <button class="btn small" id="zoomin" type="button">+</button>
-        <button class="btn small" id="rotate" type="button">⟳ Повернуть</button>
-        <label class="select">Канал
+        <div class="controlgroup" role="group" aria-label="Масштаб">
+          <button class="iconbtn" id="zoomout" type="button" title="Уменьшить">−</button>
+          <button class="iconbtn" id="zoomin" type="button" title="Увеличить">+</button>
+        </div>
+        <button class="btn ghost small" id="rotate" type="button">⟳ Повернуть</button>
+        <button class="btn ghost small" id="cambtn" type="button">📷 Камера</button>
+        <label class="field">Канал
           <select id="channel">
             <option value="color">Цвет</option>
             <option value="gray">Серый</option>
             <option value="ir">ИК</option>
           </select>
         </label>
-        <label class="select">Калибровка
-          <input id="umpp" type="text" inputmode="decimal"
-                 placeholder="10 (по умолч.)" autocomplete="off">
-          мкм/px
+        <label class="field">Калибровка
+          <span class="inputwrap">
+            <input id="umpp" type="text" inputmode="decimal"
+                   placeholder="10" autocomplete="off">
+            <span class="unit">мкм/px</span>
+          </span>
         </label>
         <label class="toggle"><input type="checkbox" id="overlaytoggle" checked> Подсветка</label>
       </div>
     </section>
 
-    <section class="card health">
-      <div class="card-head"><span class="bar"></span>Качество и статус</div>
-      <div id="validation" class="validation muted">Ожидание изображения</div>
-      <div id="score" class="score">—</div>
-      <div id="grade" class="grade muted">—</div>
-      <svg id="gauge" viewBox="0 0 200 132" width="210"></svg>
-      <div id="verdict" class="verdict muted">—</div>
-      <div id="reason" class="reason muted">Загрузите изображение для проверки</div>
-      <hr>
-      <div class="minih">Ключевые параметры</div>
-      <div id="params"></div>
-      <div class="block">
-        <div class="block-title">Дефекты</div>
-        <div id="defects"></div>
-      </div>
-    </section>
+    <aside class="side">
+      <section class="card health">
+        <div class="card-head"><span class="bar"></span>Качество и статус</div>
+        <div id="validation" class="statuspill muted" aria-live="polite">Ожидание изображения</div>
+        <div class="scorewrap">
+          <div id="score" class="score">—</div>
+          <div class="scoremeta">
+            <div id="grade" class="grade muted">—</div>
+            <div id="verdict" class="verdict muted">—</div>
+          </div>
+        </div>
+        <svg id="gauge" viewBox="0 0 200 132" width="210" aria-hidden="true"></svg>
+        <div id="reason" class="reason muted">Загрузите изображение для проверки</div>
+        <div class="keyparams">
+          <div class="minih">Ключевые параметры</div>
+          <div id="params"></div>
+        </div>
+        <div class="metrics">
+          <div class="minih">Измерение</div>
+          <div class="metricrow"><span>Символ</span><b id="msymb">—</b></div>
+          <div class="metricrow"><span>Размер X × Y</span><b id="mdim">—</b></div>
+          <div class="metricrow"><span>Апертура</span><b id="maper">—</b></div>
+          <div class="metricrow"><span>Калибровка</span><b id="mcal">—</b></div>
+        </div>
+      </section>
 
-    <section class="card diag">
-      <div class="card-head"><span class="bar"></span>Диагностика и данные</div>
-      <div class="codesel" id="codeselect"></div>
-      <div class="block">
-        <div class="block-title">Данные</div>
-        <div class="datacopy">
-          <button class="btn small" id="copyall" type="button">Скопировать содержимое</button>
-          <button class="btn small" id="copyhri" type="button" disabled>Скопировать HRI</button>
+      <section class="card diag">
+        <div class="card-head"><span class="bar"></span>Данные и отчёт</div>
+        <div class="codesel" id="codeselect"></div>
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="tab-data" type="button"
+                  role="tab">Данные</button>
+          <button class="tab" data-tab="tab-product" type="button"
+                  role="tab">Товар</button>
+          <button class="tab" data-tab="tab-defects" type="button"
+                  role="tab">Дефекты <span id="defectcount" class="count"></span></button>
+          <button class="tab" data-tab="tab-report" type="button"
+                  role="tab">Отчёт</button>
         </div>
-        <div class="contentdisplay" id="contentdisplay">—</div>
-        <div id="gswarn" class="gswarn"></div>
-        <div id="chips" class="chips"></div>
-      </div>
-      <div class="block">
-        <div class="block-title">Товар (Честный знак)</div>
-        <div class="datacopy">
-          <button class="btn small" id="crptbtn" type="button" disabled>Проверить в ЧЗ</button>
+        <div class="tabpanes">
+          <div id="tab-data" class="tabpane active" role="tabpanel">
+            <div class="datacopy">
+              <button class="btn small" id="copyall" type="button">Скопировать содержимое</button>
+              <button class="btn small ghost" id="copyhri" type="button" disabled>Скопировать HRI</button>
+            </div>
+            <div class="contentdisplay" id="contentdisplay">—</div>
+            <div id="datahint" class="hint">Загрузите изображение, чтобы увидеть
+              содержимое и AI.</div>
+            <div id="gswarn" class="gswarn"></div>
+            <div id="chips" class="chips"></div>
+          </div>
+
+          <div id="tab-product" class="tabpane" role="tabpanel">
+            <div class="toolbar">
+              <button class="btn small" id="crptbtn" type="button" disabled>Проверить в ЧЗ</button>
+            </div>
+            <div class="hint">Запрос выполняется только по кнопке; код
+              отправляется в mobile.api.crpt.ru.</div>
+            <div id="crptstatus" class="crptstatus muted">Не проверено</div>
+            <div id="crptinfo" class="crptinfo"></div>
+          </div>
+
+          <div id="tab-defects" class="tabpane" role="tabpanel">
+            <div id="defects"></div>
+          </div>
+
+          <div id="tab-report" class="tabpane reportpane" role="tabpanel">
+            <pre id="reporttext"></pre>
+            <button class="btn" id="pdfbtn" type="button">⬇ Сформировать PDF отчёт</button>
+          </div>
         </div>
-        <div class="crptnote">Запрос выполняется только по кнопке; код
-          отправляется в mobile.api.crpt.ru.</div>
-        <div id="crptstatus" class="crptstatus muted">Не проверено</div>
-        <div id="crptinfo" class="crptinfo"></div>
-      </div>
-      <div class="block">
-        <div class="block-title">Отчёт</div>
-        <pre id="reporttext"></pre>
-        <button class="btn" id="pdfbtn" type="button">⬇ Сформировать PDF отчёт</button>
-      </div>
-    </section>
+      </section>
+    </aside>
 
     <section class="card histcard">
       <div class="card-head">
         <span class="bar"></span>История проверок
+        <span id="histcount" class="count"></span>
         <span class="hist-actions">
           <button class="btn small ghost" id="csvbtn" type="button">⬇ CSV</button>
           <button class="btn small ghost" id="txtbtn" type="button">⬇ TXT</button>

@@ -2,8 +2,7 @@
 
 Python app for **GS1 DataMatrix verification**: locate symbols in photos, decode
 with zxing-cpp, grade print quality ISO/IEC 15415-style, show results in a
-Tkinter GUI, a Flask web UI, or the CLI. All user-facing text (UI, CLI, PDF) is
-Russian. Branch `master`; remote `origin` =
+Flask web UI or the CLI. All user-facing text (web, CLI, PDF) is Russian. Branch `master`; remote `origin` =
 `https://github.com/lopatin2012/VerificatorDataMatrix.git`.
 
 The working tree often carries uncommitted edits — run `git status` before
@@ -13,27 +12,22 @@ when user-facing behavior changes.
 ## Commands
 
 Always invoke the repo venv explicitly. Bare `python` is the system 3.14.5 with
-none of the app's deps — `README.md`'s claim that `python` resolves to the venv
-is wrong in this checkout.
+none of the app's deps; the README now says so too.
 
 ```
 # smoke tests — the ONLY test suite (no pytest/unittest); CI runs this
 .venv\Scripts\python.exe main.py --selftest
 
-# GUI (also the default when none of --file/--dir/--web is given)
-.venv\Scripts\python.exe main.py --gui
-# GUI with a file already loaded (tools\quick_open.bat drag-and-drop)
-.venv\Scripts\python.exe main.py --gui --file samples/G4_1.jpg
+# web service (default; Flask app served by waitress)
+.venv\Scripts\python.exe main.py
+.venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8010
 
 # one image / a directory of images (all codes; --json for automation)
 .venv\Scripts\python.exe main.py --file samples/G4_1.jpg
 .venv\Scripts\python.exe main.py --dir test_image_codes
 .venv\Scripts\python.exe main.py --dir test_image_codes --json
 
-# web service (Flask app served by waitress)
-.venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8000
-
-# Docker image runs the web service on :8501 (not 8000)
+# Docker image runs the web service on :8501 (not 8010)
 docker build -t dm-verifier .
 docker run --rm -p 8501:8501 dm-verifier
 
@@ -80,22 +74,19 @@ in git, so still verify decode/geometry changes manually against
 
 ## Architecture
 
-- `main.py` — argparse entry: GUI, web, CLI, selftest. Defaults to GUI.
-  `--gui --file PATH` opens the GUI with that image already analyzed
-  (`ui.main(initial_file=...)` → `VerifierApp.open_path`); `--gui --dir` and
-  `--json --gui` are rejected. `--um-per-px` accepts a comma and defaults to
-  `None`, which means 10 µm/px **marked as approximate** (never silently
-  precise). The CLI prints **all** codes per image and exits 1 if any image
-  decoded nothing; `--json` emits `[{file, results:[to_dict]}]` (or
-  `{file, error}`) for automation.
+- `main.py` — argparse entry: web service (default when no `--file/--dir`),
+  CLI, selftest. `--um-per-px` accepts a comma and defaults to `None`, which
+  means 10 µm/px **marked as approximate** (never silently precise). The CLI
+  prints **all** codes per image and exits 1 if any image decoded nothing;
+  `--json` emits `[{file, results:[to_dict]}]` (or `{file, error}`) for
+  automation; `--crpt` is CLI-only.
 - `tools/` — Windows drag-and-drop launchers (not bundled into the exe):
-  `quick_open.bat` → `main.py --gui --file`, `quick_check.bat` → console
-  `main.py --file` with `pause`, `quick_web.bat` → `tools/quick_web.py`
-  (`--port 8010` default, picks the next free port, opens the browser when the
-  socket accepts connections, `--host 0.0.0.0` for LAN). They resolve the repo
-  root as `..` and use the repo `.venv` (prefer `pythonw.exe` for the GUI). Keep
-  paths quoted so Cyrillic/space paths work. Never auto-kill an existing server:
-  the free-port pick avoids serving stale code.
+  `quick_check.bat` → console `main.py --file` with `pause`, `quick_web.bat` →
+  `tools/quick_web.py` (`--port 8010` default, picks the next free port, opens
+  the browser when the socket accepts connections, `--host 0.0.0.0` for LAN).
+  They resolve the repo root as `..` and use the repo `.venv`. Keep paths quoted
+  so Cyrillic/space paths work. Never auto-kill an existing server: the
+  free-port pick avoids serving stale code.
 - `verifier.analyze_all(img)` is the pipeline entry: decode + grid + grades +
   GS1 for **every** symbol, returning a list of `Result` sorted best-first
   (decoded/higher grade first); `analyze(img)` returns the first or an error
@@ -152,16 +143,8 @@ in git, so still verify decode/geometry changes manually against
   the row/column counts (that zeroed every rectangular ECC200 symbol). Values
   use a Russian decimal comma; print growth is signed (`+2,0 мкм; +2,0%`) and
   quiet zone is `2,8 мод.`. `SCALES` holds the **actual** 4/3/2/1 thresholds
-  used by the code; `Param.scale` feeds the GUI/PDF/CLI/web reports (do not
+  used by the code; `Param.scale` feeds the PDF/CLI/web reports (do not
   replace them with ISO numbers unless the grades themselves are recalibrated).
-- `ui.py` + `config.py` — GUI calibration is an empty entry by default (10 µm/px,
-  flagged approximate); «Калибровать по X-dim...» divides the nominal µm by
-  `Result.module_px_x`; the value is persisted under APPDATA (or
-  `~/.config/DataMatrixVerifier`) via `config.py`, never in the repo. The report
-  tab is a read-only `tk.Text` (selectable/copyable) with PDF/calibrate/reset
-  buttons and red calibration/estimate warnings. The Data tab has RAW and HRI
-  copy buttons and chips with AI, description and `display_value`; the «Товар»
-  tab is the explicit Chestny Znak lookup (threaded, cached, errors shown).
 - `gs1.py` — parses AIs from raw bytes or HRI; a GS/FNC1 separator is
   authoritative for variable-length fields. Supports pattern AIs (310n–316n,
   390n–395n). `validate()` returns warnings (unknown AI, fixed-length mismatch,
@@ -173,11 +156,11 @@ in git, so still verify decode/geometry changes manually against
   "AI 17 [AI 17]", and `format_gs1_date()` is shared with the expiry check.
 - `crpt.py` — opt-in Chestny Znak mobile API lookup (`lookup`/`parse_response`),
   no deps beyond `urllib`, 10 s timeout, normalized Russian statuses/warnings
-  and dates. Used by the GUI «Товар» tab, Web `/api/crpt` + product block and
-  CLI `--crpt`; see the dedicated section below for the no-auto-call policy.
+  and dates. Used by the Web «Товар» tab, `/api/crpt` and CLI `--crpt`; see the
+  dedicated section below for the no-auto-call policy.
 - Copy paths preserve the GS separator `\x1d` (only FS `\x1c`/RS `\x1e` are
-  stripped): `plain_content()` feeds `content_raw`/`content_plain`. GUI and web
-  copy the raw string and only render `[GS]` on screen. Don't strip `\x1d` —
+  stripped): `plain_content()` feeds `content_raw`/`content_plain`. The web UI
+  copies the raw string and only renders `[GS]` on screen. Don't strip `\x1d` —
   it is required to re-parse variable-length AIs.
 - `webapp.py` + `webui/` — Flask/waitress. REST: `/api/analyze` (returns
   `{image, results:[...]}`, one `result_id` per code; with no code it still
@@ -198,21 +181,23 @@ in git, so still verify decode/geometry changes manually against
   chips built with `textContent` (never innerHTML for barcode data). Upload cap
   is 25 MB (`MAX_CONTENT_LENGTH`); a 413
   returns JSON. PDFs go to `PDF_DIR` (a temp dir), never `webui/`.
-  `@app.after_request` sets `Cache-Control: no-store`.
-- `report.py` — `build_pdf` is used by both the web service and the GUI button;
-  it prints calibration (red warning + disclaimer), separates «Чтение: OK» from
-  the quality verdict, adds the `Шкала 4/3/2/1` column, shows `res.symbology`,
-  renders the GS1 table as AI/element/display value/description, optionally
-  adds a «Сведения о товаре (Честный знак)» table when `crpt_info` is passed,
-  and `build_history_pdf` builds the history export with read/GS1/quality
-  columns. `ui.py` draws its own overlays
-  and shows a "Код не найден" banner; its "Экспорт TXT" button writes
-  `scan_log` (all decoded contents this session, consecutive duplicates
-  collapsed) as UTF-8 CRLF, one code per line.
+  `@app.after_request` sets `Cache-Control: no-store`. Default listen is
+  `127.0.0.1:8010` (8000 is often taken by Apache on the owner's machine).
+- `webui/` — responsive dashboard: dark scene matte with camera preview,
+  health card with measurement rows, and tabs `Данные / Товар / Дефекты /
+  Отчёт`; history strip with time. Keep JS IDs stable or update `app.js`
+  selectors together. Camera is open-then-capture (first click previews,
+  second captures); tabs are wired by `data-tab`.
+- `report.py` — `build_pdf` is used by the web service; it prints calibration
+  (red warning + disclaimer), separates «Чтение: OK» from the quality verdict,
+  adds the `Шкала 4/3/2/1` column, shows `res.symbology`, renders the GS1 table
+  as AI/element/display value/description, optionally adds a «Сведения о товаре
+  (Честный знак)» table when `crpt_info` is passed, and `build_history_pdf`
+  builds the history export with read/GS1/quality columns.
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.40`) appears in the window title, CLI
+`VERSION` in `version.py` (currently `1.0.41`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.
@@ -220,8 +205,8 @@ edit, **minor** after a session with >30 user requests, **major** after >300.
 ## Build and release
 
 `build.spec` + `build.ps1` produce a single-file
-`dist/DataMatrixVerifier.exe` (GUI/CLI/web in one). The spec bundles `webui/`
-and `favicon.ico` and excludes torch; `build/` and `dist/` are gitignored.
+`dist/DataMatrixVerifier.exe` (CLI/web in one). The spec bundles `webui/` and
+`favicon.ico`, excludes torch/tkinter; `build/` and `dist/` are gitignored.
 Releases are published with `gh release create v<version>` attaching the exe;
 the tag must match `version.py`. Docker builds the web service only.
 
@@ -242,9 +227,9 @@ the tag must match `version.py`. Docker builds the web service only.
 
 - waitress has NO auto-reload: after editing `.py` or `webui/`, the old process
   keeps serving old code. A leftover server (possibly from another session) can
-  sit on port 8000 and report a stale `/api/version`; check
-  `Get-NetTCPConnection -LocalPort 8000` before debugging "changes don't apply".
-- `cv2.imread` fails on Cyrillic paths; the CLI/GUI use
+  sit on port 8010 and report a stale `/api/version`; check
+  `Get-NetTCPConnection -LocalPort 8010` before debugging "changes don't apply".
+- `cv2.imread` fails on Cyrillic paths; the CLI uses
   `verifier.imread_unicode` (`np.fromfile` + `imdecode`). Uploads are fine.
 - Dotted/inverted decode runs only after normal decode fails, costs ~1 s per
   code (more when tiles run), and grades coarsely; product packs / dark
@@ -253,9 +238,8 @@ the tag must match `version.py`. Docker builds the web service only.
 
 ## Chestny Znak (ЧЗ) — opt-in product lookup
 
-The app **never calls ЧЗ automatically**. Only an explicit action (GUI/Web
-button «Проверить в ЧЗ» or CLI `--crpt`) calls the undocumented public mobile
-endpoint:
+The app **never calls ЧЗ automatically**. Only an explicit action (Web button
+«Проверить в ЧЗ» or CLI `--crpt`) calls the undocumented public mobile endpoint:
 
 ```
 POST https://mobile.api.crpt.ru/mobile/check
@@ -271,5 +255,5 @@ endpoints (`/cises/info`, `/product/info`, …) remain out of scope.
 
 `crpt.parse_response()` normalizes `codeFounded`/`checkResult`/`status`/
 `warning`, nested `<category>Data`, `catalogData` and dates; `lookup()` does the
-network call. `raw` stays server/GUI-side and is stripped from the Web API,
-CLI JSON and PDF. Web caches results in memory; GUI caches per session.
+network call. `raw` stays server-side and is stripped from the Web API,
+CLI JSON and PDF. Web caches results in memory.

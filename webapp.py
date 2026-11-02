@@ -1,7 +1,7 @@
 """Web interface for the DataMatrix verifier (Flask + waitress).
 
 Deploy as a service:
-    python webapp.py [--host 0.0.0.0] [--port 8000]
+    python webapp.py [--host 0.0.0.0] [--port 8010]
 """
 import base64
 import csv
@@ -233,6 +233,11 @@ def api_crpt():
     with CRPT_LOCK:
         cached = CRPT_CACHE.get(code)
     if cached is not None:
+        if rid:
+            with ANALYZE_LOCK:
+                entry = RESULTS.get(rid)
+                if entry is not None:
+                    entry["crpt"] = cached
         return jsonify(cached)
 
     try:
@@ -354,7 +359,7 @@ def main(host=None, port=None, debug=False):
         import argparse
         ap = argparse.ArgumentParser(description="DataMatrix Verifier web service")
         ap.add_argument("--host", default="127.0.0.1")
-        ap.add_argument("--port", type=int, default=8000)
+        ap.add_argument("--port", type=int, default=8010)
         ap.add_argument("--debug", action="store_true")
         args = ap.parse_args()
         host = host or args.host

@@ -141,6 +141,11 @@ function drawScene() {
   ctx.translate(cw / 2, ch / 2);
   if (rot) ctx.rotate(rot * Math.PI / 2);
 
+  // a soft matte shadow makes the photo read as a placed sheet on the scene
+  ctx.shadowColor = "rgba(0, 0, 0, .45)";
+  ctx.shadowBlur = 26;
+  ctx.shadowOffsetY = 10;
+
   // channel filter
   ctx.filter = "none";
   if (state.channel === "gray") ctx.filter = "grayscale(1)";
@@ -242,6 +247,21 @@ function render(data) {
   drawScene();
 }
 
+function initEmptyState() {
+  drawGauge(0, "#cfd8dc");
+  renderParamsEmpty();
+  renderData({});
+  $("defects").innerHTML =
+    '<div class="defect" style="border-color:var(--line)">' +
+    '<div class="dtitle">Нет данных</div>' +
+    '<div class="drec">Загрузите изображение для проверки.</div></div>';
+  $("reporttext").textContent =
+    "Загрузите изображение, чтобы сформировать отчёт.";
+  $("pdfbtn").disabled = true;
+  resetCrpt();
+  $("crptbtn").disabled = true;
+}
+
 function renderEmpty(data) {
   const msg = data.error || "Код не найден";
   $("validation").textContent = msg;
@@ -254,13 +274,19 @@ function renderEmpty(data) {
   $("verdict").textContent = "БРАК";
   $("verdict").style.color = "#c62828";
   $("reason").textContent = msg;
+  ["msymb", "mdim", "maper", "mcal"].forEach((id) => {
+    const el = $(id);
+    if (el) el.textContent = "—";
+  });
   renderParamsEmpty();
+  const defectCount = $("defectcount");
+  if (defectCount) defectCount.textContent = "";
   $("defects").innerHTML =
     '<div class="defect" style="border-color:#90a4ae">' +
     '<div class="dtitle">Код не найден</div>' +
     '<div class="drec">Дефекты не определены.</div></div>';
   renderData({});
-  $("reporttext").textContent = "";
+  $("reporttext").textContent = "Нет данных для отчёта.";
   $("pdfbtn").disabled = true;
   state.crptCode = null;
   resetCrpt();
@@ -328,6 +354,17 @@ function renderResult(r) {
 
   $("verdict").textContent = good ? "ГОДЕН" : "БРАК";
   $("verdict").style.color = good ? "#2e7d32" : "#c62828";
+  const num = (v) => v == null ? "—" : Number(v).toLocaleString("ru-RU",
+    { maximumFractionDigits: 1 });
+  $("msymb").textContent = r.symbology || "—";
+  $("mdim").textContent = (r.x_dim_um != null && r.y_dim_um != null)
+    ? Math.round(r.x_dim_um) + " × " + Math.round(r.y_dim_um) + " мкм"
+    : "—";
+  $("maper").textContent = r.aperture_um ? r.aperture_um + " мкм" : "—";
+  $("mcal").textContent = r.um_per_px
+    ? num(r.um_per_px) + " мкм/px" +
+      (r.calibration_default ? " · по умолч." : "")
+    : "—";
   const reason = (r.params || []).find(p => !p.passed);
   $("reason").textContent = reason ? (reason.name + ": " + reason.value)
     : (r.error || "Все параметры в норме");
@@ -374,6 +411,8 @@ function renderDefects(data) {
   const wrap = $("defects");
   wrap.innerHTML = "";
   const bad = (data.params || []).filter(p => p.level && p.level !== "ok");
+  const countEl = $("defectcount");
+  if (countEl) countEl.textContent = bad.length ? String(bad.length) : "";
   if (!bad.length) {
     wrap.innerHTML = '<div class="defect" style="border-color:#2e7d32"><div class="dtitle">Все параметры в норме ✅</div></div>';
     return;
@@ -419,6 +458,8 @@ function renderData(data) {
     var plain = data.content_plain || (data.content || "").replace(/[()]/g, "");
     contentDisplay.textContent = displayWithGS(plain) || "—";
   }
+  const dataHint = $("datahint");
+  if (dataHint) dataHint.hidden = !!(data && data.content);
 
   const warn = $("gswarn");
   if (warn) {
@@ -597,6 +638,8 @@ function renderHistory() {
   const ok = items.filter(it => it.good).length;
   $("history").textContent = "Проанализировано: " + items.length + " кодов. " +
     ok + " - OK, " + (items.length - ok) + " - Брак";
+  const countEl = $("histcount");
+  if (countEl) countEl.textContent = items.length ? String(items.length) : "";
   const activeId = state.result && state.result.result_id;
   items.forEach(it => {
     const btn = document.createElement("button");
@@ -612,7 +655,12 @@ function renderHistory() {
     img.alt = "";
     const cap = document.createElement("span");
     cap.className = "histcap";
-    cap.textContent = (it.good ? "OK" : "БРАК") + " · " + it.score;
+    const time = it.ts
+      ? new Date(it.ts * 1000).toLocaleTimeString("ru-RU",
+          { hour: "2-digit", minute: "2-digit" })
+      : "";
+    cap.textContent = (it.good ? "OK" : "БРАК") + " · " + it.score +
+      (time ? " · " + time : "");
     btn.appendChild(img);
     btn.appendChild(cap);
     btn.addEventListener("click", () => loadResult(it.result_id));
@@ -639,8 +687,11 @@ function setImage(dataUrl) {
 }
 
 async function analyze(file) {
+  if (window.__stopCamera) window.__stopCamera();
   const fd = new FormData();
   fd.append("image", file);
+  const nameEl = $("filename");
+  if (nameEl) nameEl.textContent = file && file.name ? file.name : "изображение";
   const um = ($("umpp").value || "").trim();
   if (um) fd.append("um_per_px", um.replace(",", "."));
   $("validation").textContent = "Анализ...";
@@ -667,6 +718,13 @@ async function analyze(file) {
 function wireDropzone() {
   const dz = $("dropzone");
   const file = $("file");
+  const pick = $("pickbtn");
+  if (pick) {
+    pick.addEventListener("click", (e) => {
+      e.stopPropagation();
+      file.click();
+    });
+  }
   dz.addEventListener("click", (e) => {
     if (e.target.tagName === "BUTTON" || e.target.tagName === "VIDEO") return;
     file.click();
@@ -688,31 +746,55 @@ function wireDropzone() {
 
 function wireCamera() {
   let stream = null;
-  $("cambtn").addEventListener("click", async () => {
+  const video = $("video");
+  const btn = $("cambtn");
+
+  function stopCamera() {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    video.hidden = true;
+    video.srcObject = null;
+    btn.textContent = "📷 Камера";
+    if (!state.img) $("dropmsg").hidden = false;
+  }
+
+  btn.addEventListener("click", async () => {
     if (!stream) {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        $("video").hidden = false;
-        $("video").srcObject = stream;
-        $("cambtn").textContent = "📸 Снять кадр";
-        await $("video").play();
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+        });
       } catch (e) {
         $("validation").textContent = "Камера недоступна: " + e.message;
         $("validation").style.color = "#c62828";
         return;
       }
+      video.srcObject = stream;
+      video.hidden = false;
+      $("dropmsg").hidden = true;
+      btn.textContent = "📸 Снять кадр";
+      try { await video.play(); } catch (e) { /* autoplay may be blocked */ }
+      return;
     }
-    const v = $("video");
+
+    if (!video.videoWidth || !video.videoHeight) {
+      $("validation").textContent = "Камера ещё не готова";
+      $("validation").style.color = "#f9a825";
+      return;
+    }
     const canvas = document.createElement("canvas");
-    canvas.width = v.videoWidth;
-    canvas.height = v.videoHeight;
-    canvas.getContext("2d").drawImage(v, 0, 0);
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
     const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", 0.9));
+    stopCamera();
     if (blob) {
       const f = new File([blob], "camera.jpg", { type: "image/jpeg" });
       analyze(f);
     }
   });
+  window.__stopCamera = stopCamera;
+  window.addEventListener("beforeunload", stopCamera);
 }
 
 function wireCalibration() {
@@ -761,9 +843,28 @@ function wireCrpt() {
     } catch (e) {
       renderCrpt({ ok: false, error: "Ошибка сети: " + e });
     } finally {
-      btn.disabled = false;
+      const now = state.results[state.current];
+      btn.disabled = !(now && now.content_raw);
     }
   });
+}
+
+function activateTab(id) {
+  document.querySelectorAll(".tab").forEach((btn) => {
+    const active = btn.dataset.tab === id;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll(".tabpane").forEach((pane) => {
+    pane.classList.toggle("active", pane.id === id);
+  });
+}
+
+function wireTabs() {
+  document.querySelectorAll(".tab").forEach((btn) => {
+    btn.addEventListener("click", () => activateTab(btn.dataset.tab));
+  });
+  activateTab("tab-data");
 }
 
 function wireControls() {
@@ -832,6 +933,8 @@ wireDropzone();
 wireCamera();
 wireCalibration();
 wireCrpt();
+wireTabs();
 wireControls();
 wireHistoryExports();
+initEmptyState();
 loadHistory();

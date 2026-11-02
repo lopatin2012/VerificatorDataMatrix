@@ -1,10 +1,10 @@
-"""CLI entry point for the DataMatrix verifier.
+"""Entry point for the DataMatrix verifier.
 
 Usage:
+    python main.py                    # web service on 127.0.0.1:8010
     python main.py --file path/to/image.jpg
     python main.py --dir samples
     python main.py --dir samples --json
-    python main.py --gui
 """
 import argparse
 import glob
@@ -199,9 +199,9 @@ def main():
                     version=f"DataMatrix Verifier {VERSION}")
     ap.add_argument("--file", help="analyze a single image file")
     ap.add_argument("--dir", help="analyze all images in a directory")
-    ap.add_argument("--gui", action="store_true",
-                    help="launch the GUI (with --file: open that image)")
-    ap.add_argument("--web", action="store_true", help="launch the web service")
+    ap.add_argument("--web", action="store_true",
+                    help="launch the web service (default without "
+                         "--file/--dir)")
     ap.add_argument("--selftest", action="store_true",
                     help="run built-in smoke tests and exit")
     ap.add_argument("--json", action="store_true",
@@ -210,7 +210,7 @@ def main():
                     help="look up product info in Chestny Znak "
                          "(network request, opt-in)")
     ap.add_argument("--host", default="127.0.0.1", help="web service host")
-    ap.add_argument("--port", type=int, default=8000, help="web service port")
+    ap.add_argument("--port", type=int, default=8010, help="web service port")
     ap.add_argument("--um-per-px", type=_positive_float, default=None,
                     help=f"calibration, microns per pixel "
                          f"(default: {DEFAULT_UM_PER_PX:g}, marked as approximate)")
@@ -218,28 +218,16 @@ def main():
 
     if args.json and not (args.file or args.dir):
         ap.error("--json requires --file or --dir")
-    if args.json and args.gui:
-        ap.error("--json cannot be combined with --gui")
-    if args.crpt and (args.gui or args.web):
+    if args.crpt and (args.web or not (args.file or args.dir)):
         ap.error("--crpt is only for the CLI (--file/--dir)")
-    if args.crpt and not (args.file or args.dir):
-        ap.error("--crpt requires --file or --dir")
 
     if args.selftest:
         import selftest
         return selftest.run()
 
-    if args.web:
+    if args.web or (not args.file and not args.dir):
         import webapp
         webapp.main(host=args.host, port=args.port)
-        return 0
-
-    if args.gui or (not args.file and not args.dir):
-        if args.dir:
-            ap.error("--gui does not support --dir")
-        from ui import main as gui_main
-        gui_main(initial_file=args.file if args.gui else None,
-                 um_per_px=args.um_per_px)
         return 0
 
     paths = []
