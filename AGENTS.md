@@ -85,9 +85,12 @@ in git, so still verify decode/geometry changes manually against
   (or `{file, error}`) for automation.
 - `tools/` — Windows drag-and-drop launchers (not bundled into the exe):
   `quick_open.bat` → `main.py --gui --file`, `quick_check.bat` → console
-  `main.py --file` with `pause`. They resolve the repo root as `..` and use the
-  repo `.venv` (prefer `pythonw.exe` for the GUI). Keep paths quoted so
-  Cyrillic/space paths work.
+  `main.py --file` with `pause`, `quick_web.bat` → `tools/quick_web.py`
+  (`--port 8010` default, picks the next free port, opens the browser when the
+  socket accepts connections, `--host 0.0.0.0` for LAN). They resolve the repo
+  root as `..` and use the repo `.venv` (prefer `pythonw.exe` for the GUI). Keep
+  paths quoted so Cyrillic/space paths work. Never auto-kill an existing server:
+  the free-port pick avoids serving stale code.
 - `verifier.analyze_all(img)` is the pipeline entry: decode + grid + grades +
   GS1 for **every** symbol, returning a list of `Result` sorted best-first
   (decoded/higher grade first); `analyze(img)` returns the first or an error
@@ -156,7 +159,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.35`) appears in the window title, CLI
+`VERSION` in `version.py` (currently `1.0.36`) appears in the window title, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.

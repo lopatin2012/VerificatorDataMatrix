@@ -68,12 +68,20 @@ GUI сразу с файлом (или перетащите файл на `tools
 ```
 Подробнее о лаунчерах — в [tools/README.md](tools/README.md).
 
-Web-сервис (доступен любому в сети, порт 8000):
+Быстрый запуск веб-сервера на localhost (порт 8010, браузер откроется сам,
+при занятом порте выберется следующий свободный):
 ```
-.venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8000
+tools\quick_web.bat
+```
+
+Web-сервис для локальной сети (стандартный запуск):
+```
+.venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8010
 # или напрямую
-.venv\Scripts\python.exe webapp.py --host 0.0.0.0 --port 8000
+.venv\Scripts\python.exe webapp.py --host 0.0.0.0 --port 8010
 ```
+Порт `8000` на этой машине может быть занят Apache — используйте `8010`
+или другой свободный.
 В браузере: загрузка файла или перетаскивание изображения, съёмка с камеры
 (getUserMedia), дашборд с gauge/вердиктом/дефектами, скачивание PDF-отчёта.
 Ответы идут с `Cache-Control: no-store`, поэтому правки в `webui/` сразу
@@ -135,8 +143,9 @@ GS-разделители и даты), декод синтетического 
 
 - `main.py` — CLI / запуск GUI / web-сервис / `--selftest`.
 - `ui.py` — интерфейс Tkinter.
-- `tools/` — лаунчеры Windows: `quick_open.bat` (GUI по файлу) и
-  `quick_check.bat` (консольный отчёт по файлу).
+- `tools/` — лаунчеры Windows: `quick_open.bat` (GUI по файлу),
+  `quick_check.bat` (консольный отчёт по файлу) и `quick_web.bat`
+  (веб-сервер с автоподбором порта и открытием браузера).
 - `webapp.py` — Flask-сервис (REST: analyze, history, result, history.csv/txt/pdf,
   pdf, version). PDF-файлы пишутся во временный каталог, не под `webui/`.
 - `webui/` — фронтенд (HTML/CSS/JS: загрузка, камера, heatmap, дашборд).
