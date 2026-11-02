@@ -61,7 +61,7 @@ typecheck, formatter, or codegen config — don't invent one.
 
 `main.py --selftest` (`selftest.py`) is self-contained: GS1 parsing/validation
 (including GS-separated variable fields and dates) plus synthetic solid, dotted,
-and inverted DataMatrix decode and geometry/grading regressions (44 checks). It
+and inverted DataMatrix decode and geometry/grading regressions (45 checks). It
 asserts that dimensions are reported in source microns, that a rectangular
 ECC200 symbol (12x26) is not penalised for its aspect ratio, that the default
 calibration is flagged, that report values use a decimal comma, that
@@ -150,7 +150,9 @@ in git, so still verify decode/geometry changes manually against
   replace them with ISO numbers unless the grades themselves are recalibrated).
   `grade_symbol(..., uec=...)` uses zxing's UEC ratio when present and only
   falls back to `SC-20` for grid/dotted paths. Symbol contrast now uses the
-  ISO-oriented bands `70/55/40/20`; the remaining parameters are still
+  ISO-oriented bands `70/55/40/20`; illumination non-uniformity uses a robust
+  MAD-based spread (`_relative_mad`) so one edge-affected light module cannot
+  turn a clean code into a 12% failure. The remaining parameters are still
   approximate. Use `tools/evaluate_grades.py` before changing more thresholds.
 - `gs1.py` — parses AIs from raw bytes or HRI; a GS/FNC1 separator is
   authoritative for variable-length fields. Supports pattern AIs (310n–316n,
@@ -212,7 +214,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.44`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.45`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.

@@ -205,6 +205,13 @@ def _run_checks():
     check("grade: contrast thresholds follow the ISO-oriented scale",
           [_grade_contrast(v) for v in (70, 55, 40, 20, 19, 62)]
           == [4, 3, 2, 1, 0, 3])
+    illum = next((p for p in res.params
+                  if p.name == "Неоднородность освещения"), None)
+    check("grade: illumination uses a robust spread",
+          illum is not None and illum.grade == 4
+          and float(illum.value.rstrip("%").replace(",", ".")) <= 8.0,
+          f"{illum.value if illum else None} "
+          f"({illum.grade if illum else None})")
 
     # --- separated read / GS1 / quality statuses ---
     check("status: plain DataMatrix is not reported as GS1",

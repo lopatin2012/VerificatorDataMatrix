@@ -305,6 +305,7 @@ function renderEmpty(data) {
   $("verdict").textContent = "БРАК";
   $("verdict").style.color = "#c62828";
   $("reason").textContent = msg;
+  $("reason").style.color = "";
   ["msymb", "mdim", "maper", "mcal"].forEach((id) => {
     const el = $(id);
     if (el) el.textContent = "—";
@@ -386,6 +387,18 @@ function renderResult(r) {
 
   $("verdict").textContent = good ? "ГОДЕН" : "БРАК";
   $("verdict").style.color = good ? "#2e7d32" : "#c62828";
+  const graded = (r.params || []).filter((p) => p.level);
+  const worst = graded.length
+    ? graded.reduce((a, b) => (b.grade < a.grade ? b : a))
+    : null;
+  if (worst && worst.grade < 4) {
+    $("reason").textContent = "Ограничивает: " + worst.name + " — " +
+      worst.value + " (" + worst.grade + ")";
+    $("reason").style.color = worst.grade < 3 ? "#b91c1c" : "#b45309";
+  } else {
+    $("reason").textContent = r.error || "Все параметры в норме";
+    $("reason").style.color = "";
+  }
   const num = (v) => v == null ? "—" : Number(v).toLocaleString("ru-RU",
     { maximumFractionDigits: 1 });
   $("msymb").textContent = r.symbology || "—";
@@ -398,10 +411,6 @@ function renderResult(r) {
       (r.calibration_default ? " · по умолч." : "")
     : "—";
   $("calibbtn").disabled = !r.module_px_x;
-  const reason = (r.params || []).find(p => !p.passed);
-  $("reason").textContent = reason ? (reason.name + ": " + reason.value)
-    : (r.error || "Все параметры в норме");
-
   renderParams(r);
   renderDefects(r);
   renderData(r);

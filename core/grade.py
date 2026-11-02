@@ -65,6 +65,24 @@ class Param:
         return f"{self.value} ({self.grade})"
 
 
+def _relative_mad(values):
+    """Robust relative spread (MAD-based) for illumination uniformity.
+
+    A plain standard deviation is dominated by a few light modules whose cell
+    average was pulled down by an adjacent dark edge or a grid/edge artifact;
+    that made clean synthetic codes look like 12% non-uniform lighting. MAD
+    ignores those outliers while still catching real broad lighting gradients.
+    """
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size < 2:
+        return 0.0
+    median = float(np.median(arr))
+    if median <= 0:
+        return 0.0
+    deviation = float(np.median(np.abs(arr - median)))
+    return min(100.0, 1.4826 * deviation / median * 100.0)
+
+
 def _grade_contrast(sc_pct):
     """ISO 15415-oriented symbol-contrast bands (A/B/C/D/F)."""
     if sc_pct >= 70:
@@ -218,11 +236,8 @@ def grade_symbol(sym, decoded, uec=None):
     params.append(Param("Запас по коэффициенту отражения", f"{_ru(rm_pct)}%",
                         _grade_reflectance_margin(rm_pct)))
 
-    # illumination non-uniformity: relative std of light-module reflectance
-    if light.size > 1:
-        ill = float(np.std(light) / max(1.0, float(np.mean(light)))) * 100.0
-    else:
-        ill = 0.0
+    # illumination non-uniformity: robust spread of light-module reflectance
+    ill = _relative_mad(light)
     if ill <= 8:
         ill_g = 4
     elif ill <= 14:
