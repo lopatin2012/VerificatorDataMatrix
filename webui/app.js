@@ -304,8 +304,13 @@ function renderResult(r) {
   const good = r.good;
   const vcolor = good ? "#2e7d32" : "#c62828";
   const val = $("validation");
-  val.textContent = "Валидация: " + (r.validation === "OK" ? "ОК" : "БРАК");
-  val.style.color = vcolor;
+  const readOk = r.validation === "OK";
+  const gs1 = r.gs1_status === "ok" ? "OK"
+    : (r.gs1_status === "warn"
+      ? ((r.gs1_warnings || []).length + " предупр.") : "—");
+  val.textContent = "Чтение: " + (readOk ? "OK" : "ошибка") + " · GS1: " + gs1;
+  val.style.color = !readOk ? "#c62828"
+    : (r.gs1_status === "warn" ? "#f9a825" : "#2e7d32");
 
   const scoreEl = $("score");
   scoreEl.innerHTML = r.score + '<span class="of"> из 100</span>';
@@ -434,6 +439,14 @@ function renderReport(data) {
   lines.push("Класс: " + data.overall_class);
   if (data.class_code) lines.push("Код класса (машинный): " + data.class_code);
   lines.push("Чтение: " + (data.validation === "OK" ? "OK" : "НЕ ДЕКОДИРОВАНО"));
+  const gs1 = data.gs1_status === "ok" ? "OK"
+    : (data.gs1_status === "warn"
+      ? ((data.gs1_warnings || []).length + " предупр.") : "—");
+  lines.push("GS1: " + gs1);
+  const quality = data.quality_ok ? "ГОДЕН" : (data.read_ok ? "БРАК" : "—");
+  const grade = data.min_grade != null
+    ? data.min_grade.toFixed(1).replace(".", ",") : "—";
+  lines.push("Качество: " + quality + " (грейд " + grade + ")");
   if (data.calibration_note) lines.push(data.calibration_note);
   if (data.calibration_warning) {
     lines.push("ВНИМАНИЕ: " + data.calibration_warning);
@@ -448,6 +461,11 @@ function renderReport(data) {
   (data.params || []).forEach(p => {
     const mark = p.level === "ok" ? "OK" : (p.level === "warn" ? "WARN" : "FAIL");
     lines.push("  [" + mark + "] " + p.name + ": " + (p.display || p.value));
+  });
+  lines.push("");
+  lines.push("Шкала оценок 4/3/2/1:");
+  (data.params || []).forEach(p => {
+    if (p.scale) lines.push("  " + p.name + ": " + p.scale);
   });
   if ((data.gs1_warnings || []).length) {
     lines.push("");
@@ -490,8 +508,10 @@ function renderHistory() {
     btn.type = "button";
     btn.className = "histitem " + (it.good ? "ok" : "bad") +
       (it.result_id === activeId ? " active" : "");
-    btn.title = it.validation + " · " + (it.overall_class || "") +
-      " · " + (it.content || "(не декодировано)");
+    const read = it.read_ok ? "Чтение: OK" : "Чтение: ошибка";
+    const qual = it.quality_ok ? "ГОДЕН" : (it.read_ok ? "БРАК" : "—");
+    btn.title = read + " · Качество: " + qual + " · " +
+      (it.overall_class || "") + " · " + (it.content || "(не декодировано)");
     const img = document.createElement("img");
     img.src = it.thumb;
     img.alt = "";

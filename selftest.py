@@ -7,7 +7,7 @@ import numpy as np
 import zxingcpp
 
 from gs1 import parse, validate
-from verifier import _parse_growth, analyze, calibration_note
+from verifier import _parse_growth, analyze, calibration_note, to_dict
 
 
 def _module_map(text):
@@ -174,6 +174,26 @@ def _run_checks():
           and "мкм" in growth.value, growth.value if growth else "")
     check("report: growth parser accepts a comma",
           _parse_growth("+1,8 мкм; +2,0%") == (1.8, 2.0))
+
+    # --- separated read / GS1 / quality statuses ---
+    check("status: plain DataMatrix is not reported as GS1",
+          res.gs1_status == "none" and not res.gs1_warnings,
+          f"{res.gs1_status} {res.gs1_warnings}")
+    check("status: read and quality flags are explicit",
+          res.read_ok and res.quality_ok and res.quality_status == "good",
+          f"read={res.read_ok} quality={res.quality_ok} "
+          f"status={res.quality_status}")
+    gs1_res = analyze(_render_solid(
+        _module_map("0100012345600012\x1d17251332"), quiet=3))
+    check("status: GS1 warnings are reported separately",
+          gs1_res.gs1_status == "warn" and gs1_res.gs1_warnings,
+          f"{gs1_res.gs1_status} {gs1_res.gs1_warnings}")
+    payload = to_dict(res)
+    check("report: JSON carries statuses and threshold scales",
+          payload["read_ok"] and payload["quality_ok"]
+          and payload["gs1_status"] == "none"
+          and bool(payload["params"][1]["scale"]),
+          f"{payload['gs1_status']} {payload['params'][1].get('scale')}")
 
     return checks
 

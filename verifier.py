@@ -80,9 +80,13 @@ class Result:
         self.params = []
         self.elements = []
         self.gs1_warnings = []
+        self.gs1_status = "none"       # ok | warn | none
+        self.read_ok = False
+        self.quality_ok = False
+        self.quality_status = "unknown"  # good | bad | unknown
         self.overall_class = None
         self.class_code = None
-        self.validation = "FAIL"
+        self.validation = "FAIL"       # legacy: decode status
         self.symbol = None
         self.corner_points = None
         self.error = None
@@ -192,6 +196,14 @@ def _analyze_one(img, dec, um_per_px, calibration_default):
     res.overall_class = _class_string(res)
     res.class_code = _class_code(res)
     res.validation = "OK" if dec.ok else "FAIL"
+    res.read_ok = dec.ok
+    if res.elements:
+        res.gs1_status = "warn" if res.gs1_warnings else "ok"
+    else:
+        res.gs1_status = "none"
+    res.quality_ok = is_good(res)
+    res.quality_status = ("good" if res.quality_ok
+                          else ("bad" if res.read_ok else "unknown"))
 
     return res
 
@@ -251,6 +263,10 @@ def to_dict(res):
         "content_plain": plain_content(res),
         "symbology": res.symbology,
         "validation": res.validation,
+        "read_ok": res.read_ok,
+        "gs1_status": res.gs1_status,
+        "quality_ok": res.quality_ok,
+        "quality_status": res.quality_status,
         "good": good,
         "overall_class": res.overall_class,
         "class_code": res.class_code,
@@ -269,7 +285,8 @@ def to_dict(res):
         "symbol_size": f"{res.symbol.rows}x{res.symbol.cols}" if res.symbol else None,
         "params": [
             {"name": p.name, "value": p.value, "grade": p.grade,
-             "display": p.display, "passed": p.passed, "level": p.level}
+             "display": p.display, "scale": p.scale,
+             "passed": p.passed, "level": p.level}
             for p in res.params
         ],
         "elements": [

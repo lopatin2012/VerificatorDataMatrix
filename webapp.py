@@ -86,6 +86,9 @@ def _history_items():
             "score": d["score"],
             "color": d["color"],
             "validation": d["validation"],
+            "read_ok": d.get("read_ok", d["validation"] == "OK"),
+            "gs1_status": d.get("gs1_status", "none"),
+            "quality_ok": d.get("quality_ok", d["good"]),
             "overall_class": d["overall_class"],
             "content": d["content"],
             "symbol_size": d["symbol_size"],
@@ -222,13 +225,19 @@ def api_history_csv():
     rows = _export_rows()
     out = io.StringIO()
     w = csv.writer(out, delimiter=";")
-    w.writerow(["Время", "Валидация", "Класс", "Оценка", "Символ",
-                "Содержимое", "Калибровка", "Данные GS1"])
+    w.writerow(["Время", "Чтение", "GS1", "Качество", "Класс", "Оценка",
+                "Символ", "Содержимое", "Калибровка", "Данные GS1"])
     for d in rows:
         elems = "; ".join(f'{el["name"]}={el["value"]}'
                           for el in d.get("elements", []))
-        w.writerow([d["ts_text"], d["validation"], d["overall_class"] or "",
-                    d["score"], d["symbol_size"] or "", d["content"] or "",
+        gs1 = {"ok": "OK",
+               "warn": f"{len(d.get('gs1_warnings', []))} предупр.",
+               "none": "—"}.get(d.get("gs1_status"), "—")
+        quality = ("ГОДЕН" if d.get("quality_ok")
+                   else ("БРАК" if d.get("read_ok") else "—"))
+        w.writerow([d["ts_text"], "OK" if d.get("read_ok") else "ошибка",
+                    gs1, quality, d["overall_class"] or "", d["score"],
+                    d["symbol_size"] or "", d["content"] or "",
                     d.get("calibration_note", ""), elems])
     data = "\ufeff" + out.getvalue()  # BOM so Excel reads UTF-8
     return Response(

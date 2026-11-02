@@ -19,12 +19,33 @@ def _signed(value, digits=1):
     return f"{value:+.{digits}f}".replace(".", ",")
 
 
+# Thresholds actually used by this module, in grade order 4/3/2/1.
+# Kept next to the grade functions so the report never claims ISO thresholds
+# that the implementation does not use.
+SCALES = {
+    "Декодирование": "",
+    "Контраст символа": "≥40/30/20/10 %",
+    "Запас по коэффициенту отражения": "≥10/7/5/3 %",
+    "Неоднородность освещения": "≤8/14/22/30 %",
+    "Осевая неоднородность": "≤8/12/16/20 %",
+    "Неоднородность сетки": "≤8/12/16/22 %",
+    "Размерность печати X": "≤8/14/22/32 %",
+    "Размерность печати Y": "≤8/14/22/32 %",
+    "Левая часть шаблона \"L\"": "≤12/20/30/45 %",
+    "Нижняя часть шаблона \"L\"": "≤12/20/30/45 %",
+    "Последовательность тактовых модулей": "≤12/20/30/45 %",
+    "Свободная зона": "≥1,0/0,75/0,5/0,25 мод.",
+    "Запас коррекции ошибок": "≥40/30/20/10 %",
+}
+
+
 class Param:
     def __init__(self, name, value, grade, unit=""):
         self.name = name
         self.value = value
         self.grade = grade
         self.unit = unit
+        self.scale = SCALES.get(name, "")
 
     @property
     def passed(self):

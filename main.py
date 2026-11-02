@@ -42,7 +42,14 @@ def print_report(res, path, index=None, total=None):
     if res.error or res.symbol is None:
         print("Код не найден:", res.error or "символ не найден")
         return
-    print("Статус:", res.overall_class, "| Валидация:", res.validation)
+    gs1 = {"ok": "OK",
+           "warn": f"{len(res.gs1_warnings)} предупр.",
+           "none": "—"}.get(res.gs1_status, "—")
+    quality = ("ГОДЕН" if res.quality_ok
+               else ("БРАК" if res.read_ok else "—"))
+    print("Статус:", res.overall_class)
+    print(f"Чтение: {'OK' if res.read_ok else 'ОШИБКА'} | GS1: {gs1} | "
+          f"Качество: {quality}")
     print("-" * 60)
     print("Содержимое:", res.content if res.content else "(не декодировано)")
     print("Штрих-код:", res.symbology, f"({res.symbol.rows}x{res.symbol.cols})")
@@ -56,6 +63,11 @@ def print_report(res, path, index=None, total=None):
     for p in res.params:
         mark = "OK  " if p.level == "ok" else ("WARN" if p.level == "warn" else "FAIL")
         print(f"  [{mark}] {p.name}: {p.display}")
+    print("-" * 60)
+    print("Шкала оценок 4/3/2/1:")
+    for p in res.params:
+        if p.scale:
+            print(f"  {p.name}: {p.scale}")
     print("-" * 60)
     for el in res.elements:
         print(f"  {el.display_name():<8} = {el.value}")

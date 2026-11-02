@@ -193,13 +193,13 @@ def build_pdf(res, frame_bgr, path):
 
     # Parameters table
     story.append(Paragraph("Параметры по ISO 15415", s_h))
-    header = [["Параметр", "Значение", "Статус"]]
+    header = [["Параметр", "Значение", "Статус", "Шкала 4/3/2/1"]]
     rows = []
     for p in res.params:
         status = "OK" if p.level == "ok" else ("Предупреждение" if p.level == "warn" else "Ошибка")
-        rows.append([p.name, p.display, status])
+        rows.append([p.name, p.display, status, p.scale])
     data = header + rows
-    pt = Table(data, colWidths=[75 * mm, 55 * mm, 40 * mm],
+    pt = Table(data, colWidths=[58 * mm, 38 * mm, 28 * mm, 46 * mm],
                repeatRows=1)
     style = [
         ("FONTNAME", (0, 0), (-1, 0), FB),
@@ -207,7 +207,7 @@ def build_pdf(res, frame_bgr, path):
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a237e")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("ALIGN", (2, 0), (2, -1), "CENTER"),
+        ("ALIGN", (2, 0), (3, -1), "CENTER"),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#b0bec5")),
@@ -226,7 +226,18 @@ def build_pdf(res, frame_bgr, path):
         "Грейды — оценка по ISO/IEC 15415, не сертификация.", s_small))
     story.append(Spacer(1, 4 * mm))
 
-    # GS1 data
+    # GS1 status and data
+    gs1_text = {"ok": "GS1: OK",
+                "warn": f"GS1: {len(res.gs1_warnings)} предупреждений",
+                "none": "GS1: данные не найдены"}.get(res.gs1_status,
+                                                      "GS1: —")
+    story.append(Paragraph(gs1_text, s_body))
+    if res.gs1_warnings:
+        warn_style = ParagraphStyle(
+            "gs1warn", fontName=F, fontSize=8.5, leading=11,
+            textColor=colors.HexColor("#c62828"))
+        for warning in res.gs1_warnings:
+            story.append(Paragraph("! " + _clean_para(warning), warn_style))
     if res.elements:
         story.append(Paragraph("Данные GS1", s_h))
         cell = ParagraphStyle("cell", fontName=F, fontSize=8.5, leading=11)
@@ -312,20 +323,29 @@ def build_history_pdf(entries, path):
     story.append(Spacer(1, 3 * mm))
 
     header = [Paragraph("№", s_hcell), Paragraph("Время", s_hcell),
-              Paragraph("Валидация", s_hcell), Paragraph("Класс", s_hcell),
+              Paragraph("Чтение", s_hcell), Paragraph("GS1", s_hcell),
+              Paragraph("Качество", s_hcell), Paragraph("Класс", s_hcell),
               Paragraph("Оценка", s_hcell), Paragraph("Содержимое", s_hcell)]
     data = [header]
     for i, d in enumerate(entries, start=1):
+        gs1 = {"ok": "OK",
+               "warn": f"{len(d.get('gs1_warnings', []))} предупр.",
+               "none": "—"}.get(d.get("gs1_status"), "—")
+        quality = ("ГОДЕН" if d.get("quality_ok")
+                   else ("БРАК" if d.get("read_ok") else "—"))
         data.append([
             Paragraph(str(i), s_cell),
             Paragraph(_clean_para(d.get("ts_text", "")), s_cell),
-            Paragraph(_clean_para(d.get("validation") or ""), s_cell),
+            Paragraph("OK" if d.get("read_ok") else "ошибка", s_cell),
+            Paragraph(gs1, s_cell),
+            Paragraph(quality, s_cell),
             Paragraph(_clean_para(d.get("overall_class") or "—"), s_cell),
             Paragraph(str(d.get("score", "—")), s_cell),
             Paragraph(_clean_para(d.get("content") or "(не декодировано)"),
                       s_cell),
         ])
-    widths = [10 * mm, 32 * mm, 22 * mm, 34 * mm, 16 * mm, 64 * mm]
+    widths = [7 * mm, 28 * mm, 15 * mm, 18 * mm, 18 * mm, 30 * mm,
+              12 * mm, 50 * mm]
     table = Table(data, colWidths=widths, repeatRows=1)
     style = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a237e")),
@@ -339,9 +359,12 @@ def build_history_pdf(entries, path):
         if i % 2 == 0:
             style.append(("BACKGROUND", (0, i), (-1, i),
                           colors.HexColor("#f3f5f9")))
-        c = (colors.HexColor("#2e7d32") if d.get("good")
-             else colors.HexColor("#c62828"))
-        style.append(("TEXTCOLOR", (2, i), (2, i), c))
+        read_color = (colors.HexColor("#2e7d32") if d.get("read_ok")
+                      else colors.HexColor("#c62828"))
+        style.append(("TEXTCOLOR", (2, i), (2, i), read_color))
+        quality_color = (colors.HexColor("#2e7d32") if d.get("quality_ok")
+                         else colors.HexColor("#c62828"))
+        style.append(("TEXTCOLOR", (4, i), (4, i), quality_color))
     table.setStyle(TableStyle(style))
     story.append(table)
 

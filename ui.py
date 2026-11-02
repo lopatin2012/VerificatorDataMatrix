@@ -551,6 +551,8 @@ class VerifierApp:
         self._refresh_scene()
 
         if res.error or res.symbol is None:
+            self.valid_var.set("Чтение: ошибка · GS1: —")
+            self.valid_lbl.configure(fg="#c62828")
             self._set_verdict("БРАК", "#c62828", res.error or "Код не найден")
             self._render_health(None)
             self._render_defects([])
@@ -562,8 +564,17 @@ class VerifierApp:
 
         score, color = score_of(res)
         good = is_good(res)
-        self.valid_var.set("Валидация: " + ("ОК" if good else "БРАК"))
-        self.valid_lbl.configure(fg="#2e7d32" if good else "#c62828")
+        read_ok = res.validation == "OK"
+        self.valid_var.set(
+            ("Чтение: OK" if read_ok else "Чтение: ошибка")
+            + " · " + self._gs1_status_text(res))
+        if not read_ok:
+            status_color = "#c62828"
+        elif res.gs1_status == "warn":
+            status_color = "#f9a825"
+        else:
+            status_color = "#2e7d32"
+        self.valid_lbl.configure(fg=status_color)
         verdict = "ГОДЕН" if good else "БРАК"
         reason = self._first_fail_reason(res)
         self._set_verdict(verdict, "#2e7d32" if good else "#c62828", reason)
@@ -578,6 +589,13 @@ class VerifierApp:
         self.verdict_var.set(text)
         self.verdict_lbl.configure(fg=color)
         self.reason_var.set(reason)
+
+    def _gs1_status_text(self, res):
+        if res.gs1_status == "warn":
+            return f"GS1: {len(res.gs1_warnings)} предупр."
+        if res.gs1_status == "ok":
+            return "GS1: OK"
+        return "GS1: —"
 
     def _first_fail_reason(self, res):
         for p in res.params:
@@ -742,10 +760,14 @@ class VerifierApp:
             self.report_text.insert("1.0", "Нет данных для отчёта.")
             self.report_text.configure(state="disabled")
             return
+        quality = ("ГОДЕН" if res.quality_ok
+                   else ("БРАК" if res.read_ok else "—"))
         lines = [
             f"Класс: {res.overall_class}",
             f"Код класса (машинный): {res.class_code or '—'}",
             f"Чтение: {'OK' if res.validation == 'OK' else 'НЕ ДЕКОДИРОВАНО'}",
+            self._gs1_status_text(res),
+            f"Качество: {quality} (грейд {fmt_ru(res.min_grade, 1)})",
             calibration_note(res),
         ]
         if res.calibration_default:
@@ -762,6 +784,11 @@ class VerifierApp:
             mark = {"ok": "OK", "warn": "WARN", "error": "FAIL"}.get(p.level,
                                                                      "FAIL")
             lines.append(f"  [{mark:<4}] {p.name}: {p.display}")
+        lines.append("")
+        lines.append("Шкала оценок 4/3/2/1:")
+        for p in res.params:
+            if p.scale:
+                lines.append(f"  {p.name}: {p.scale}")
         if res.gs1_warnings:
             lines.append("")
             lines.append(f"Предупреждения GS1 ({len(res.gs1_warnings)}):")
@@ -784,7 +811,7 @@ class VerifierApp:
                     or (res.calibration_default
                         and line.startswith("Калибровка"))):
                 self.report_text.tag_add("warn", f"{i}.0", f"{i}.end")
-            elif line.startswith(("Параметры", "Данные GS1",
+            elif line.startswith(("Параметры", "Шкала", "Данные GS1",
                                   "Предупреждения GS1")):
                 self.report_text.tag_add("head", f"{i}.0", f"{i}.end")
         self.report_text.configure(state="disabled")
