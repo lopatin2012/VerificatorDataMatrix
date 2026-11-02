@@ -19,6 +19,7 @@ from flask import (Flask, Response, jsonify, request, send_file,
                    send_from_directory)
 from PIL import Image
 
+import crpt
 from report import build_history_pdf, build_pdf
 from verifier import analyze_all, to_dict
 from version import VERSION
@@ -45,6 +46,11 @@ ANALYZE_LOCK = threading.Lock()
 RESULTS = {}          # id -> {res, img, payload, thumb, ts}
 RESULTS_ORDER = []    # LRU
 RESULTS_MAX = 50
+
+# Opt-in Chestny Znak lookups (only when /api/crpt is called explicitly).
+CRPT_LOCK = threading.Lock()
+CRPT_CACHE = {}
+CRPT_CACHE_MAX = 100
 
 
 def _image_data_url(img, quality=85):
@@ -204,7 +210,46 @@ def api_result(rid):
     if entry is None:
         return jsonify({"error": "Результат не найден (истёк)"}), 404
     return jsonify({"image": _image_data_url(entry["img"]),
-                    "results": [entry["payload"]]})
+                    "results": [entry["payload"]],
+                    "crpt": entry.get("crpt")})
+
+
+@app.post("/api/crpt")
+def api_crpt():
+    """Explicit, opt-in product lookup in Chestny Znak (no auth)."""
+    data = request.get_json(silent=True) or {}
+    rid = data.get("result_id")
+    code = str(data.get("code") or "").strip(" \t\r\n")
+    if rid:
+        with ANALYZE_LOCK:
+            entry = RESULTS.get(rid)
+        if entry is None:
+            return jsonify({"error": "Результат не найден (истёк)"}), 404
+        code = (entry["res"].content_raw or entry["res"].content or
+                code).strip(" \t\r\n")
+    if not code:
+        return jsonify({"error": "Нет кода для проверки"}), 400
+
+    with CRPT_LOCK:
+        cached = CRPT_CACHE.get(code)
+    if cached is not None:
+        return jsonify(cached)
+
+    try:
+        info = crpt.lookup(code)
+    except crpt.CrptError as exc:
+        return jsonify({"error": str(exc)}), 502
+    public = {k: v for k, v in info.items() if k != "raw"}
+    with CRPT_LOCK:
+        CRPT_CACHE[code] = public
+        if len(CRPT_CACHE) > CRPT_CACHE_MAX:
+            CRPT_CACHE.pop(next(iter(CRPT_CACHE)))
+    if rid:
+        with ANALYZE_LOCK:
+            entry = RESULTS.get(rid)
+            if entry is not None:
+                entry["crpt"] = public
+    return jsonify(public)
 
 
 def _export_rows():
@@ -296,7 +341,7 @@ def api_pdf():
     res, img = entry["res"], entry["img"]
     pdf_path = os.path.join(PDF_DIR, f"report_{rid}.pdf")
     try:
-        build_pdf(res, img, pdf_path)
+        build_pdf(res, img, pdf_path, crpt_info=entry.get("crpt"))
     except Exception as exc:
         return jsonify({"error": f"Ошибка формирования PDF: {exc}"}), 500
     return send_file(pdf_path, as_attachment=True,

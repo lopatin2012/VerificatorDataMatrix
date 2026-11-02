@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import zxingcpp
 
+import crpt
 from gs1 import is_gs1, parse, validate
 from verifier import (_parse_growth, analyze, calibration_note, hri_content,
                       to_dict)
@@ -230,6 +231,48 @@ def _run_checks():
           == "00012345600012"
           and payload["content_hri"] == "",
           str(gs1_payload["elements"][:1]))
+
+    # --- Chestny Znak response normalization (no network) ---
+    cz_raw = {
+        "codeFounded": True, "checkResult": False, "category": "beer",
+        "status": "wrong", "warning": "not_verified",
+        "codeResolveData": {
+            "gtin": "04605622007626", "cis": "5Gf>n9p",
+            "verified": False, "valid": True, "isBlocked": False,
+            "ais": {"gtin": "04605622007626", "serial": "5Gf>n9p"},
+            "message": "Code is invalid (cryptoEnd missing or incorrect)",
+        },
+        "beerData": {
+            "productName": "Пиво светлое",
+            "producerName": "АО \"Завод\"",
+            "status": "RETIRED",
+            "expirationDate": "2024-04-19T00:00:00Z",
+            "producedDate": 1709337600000,
+        },
+        "catalogData": [{"good_attrs": [
+            {"attr_name": "Страна производства", "attr_value": "Россия"},
+            {"attr_name": "Тип упаковки", "attr_value": "КЕГ"},
+        ]}],
+    }
+    cz = crpt.parse_response(cz_raw)
+    check("crpt: response normalized",
+          cz["found"] and not cz["check"] and not cz["verified"]
+          and cz["product_name"] == "Пиво светлое"
+          and cz["producer"] == 'АО "Завод"'
+          and cz["status_text"] == "Выведен из оборота"
+          and cz["country"] == "Россия",
+          f"{cz['product_name']} / {cz['status_text']} / {cz['country']}")
+    check("crpt: dates and warning are human-readable",
+          cz["expiry"] == "19.04.2024" and cz["produced"] == "02.03.2024"
+          and "криптохвост" in (cz["warning_text"] or ""),
+          f"{cz['expiry']} / {cz['produced']} / {cz['warning_text']}")
+    cz_missing = crpt.parse_response({
+        "codeFounded": False, "checkResult": False,
+        "status": "not_found", "warning": "not_found",
+    })
+    check("crpt: not-found response stays non-fatal",
+          not cz_missing["found"] and cz_missing["status_text"]
+          == "Не найден", str(cz_missing["warning_text"]))
 
     return checks
 

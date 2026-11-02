@@ -67,7 +67,7 @@ typecheck, formatter, or codegen config — don't invent one.
 
 `main.py --selftest` (`selftest.py`) is self-contained: GS1 parsing/validation
 (including GS-separated variable fields and dates) plus synthetic solid, dotted,
-and inverted DataMatrix decode and geometry/grading regressions (39 checks). It
+and inverted DataMatrix decode and geometry/grading regressions (42 checks). It
 asserts that dimensions are reported in source microns, that a rectangular
 ECC200 symbol (12x26) is not penalised for its aspect ratio, that the default
 calibration is flagged, that report values use a decimal comma, that
@@ -160,7 +160,8 @@ in git, so still verify decode/geometry changes manually against
   `~/.config/DataMatrixVerifier`) via `config.py`, never in the repo. The report
   tab is a read-only `tk.Text` (selectable/copyable) with PDF/calibrate/reset
   buttons and red calibration/estimate warnings. The Data tab has RAW and HRI
-  copy buttons and chips with AI, description and `display_value`.
+  copy buttons and chips with AI, description and `display_value`; the «Товар»
+  tab is the explicit Chestny Znak lookup (threaded, cached, errors shown).
 - `gs1.py` — parses AIs from raw bytes or HRI; a GS/FNC1 separator is
   authoritative for variable-length fields. Supports pattern AIs (310n–316n,
   390n–395n). `validate()` returns warnings (unknown AI, fixed-length mismatch,
@@ -170,6 +171,10 @@ in git, so still verify decode/geometry changes manually against
   starting with a valid GTIN is the ambiguous case. `Element.display_value()`
   renders `ДД.ММ.ГГГГ` (DD=00 -> last day), `display_label()` avoids
   "AI 17 [AI 17]", and `format_gs1_date()` is shared with the expiry check.
+- `crpt.py` — opt-in Chestny Znak mobile API lookup (`lookup`/`parse_response`),
+  no deps beyond `urllib`, 10 s timeout, normalized Russian statuses/warnings
+  and dates. Used by the GUI «Товар» tab, Web `/api/crpt` + product block and
+  CLI `--crpt`; see the dedicated section below for the no-auto-call policy.
 - Copy paths preserve the GS separator `\x1d` (only FS `\x1c`/RS `\x1e` are
   stripped): `plain_content()` feeds `content_raw`/`content_plain`. GUI and web
   copy the raw string and only render `[GS]` on screen. Don't strip `\x1d` —
@@ -178,8 +183,11 @@ in git, so still verify decode/geometry changes manually against
   `{image, results:[...]}`, one `result_id` per code; with no code it still
   returns `image` plus `error`), `/api/history`, `/api/history/clear`,
   `/api/result/<id>`, `/api/history.csv`, `/api/history.txt`,
-  `/api/history.pdf`, `/api/pdf`, `/api/version`. Entries are an in-memory
-  LRU of 50 (`{res, img, payload, thumb, ts}`), so ids 404 once evicted and
+  `/api/history.pdf`, `/api/pdf`, `/api/version`, `/api/crpt` (opt-in product
+  lookup, 200 with normalized data, 400/404/502 on error; result cached and
+  attached to the history entry so `/api/result` and the PDF can reuse it).
+  Entries are an in-memory LRU of 50
+  (`{res, img, payload, thumb, ts, crpt?}`), so ids 404 once evicted and
   history dies with the process. `history.txt` is one decoded code per line
   (`content_plain`, real GS separators, CRLF); undecoded entries are skipped.
   `/api/analyze` also accepts an optional `um_per_px` form field (comma or dot,
@@ -194,15 +202,17 @@ in git, so still verify decode/geometry changes manually against
 - `report.py` — `build_pdf` is used by both the web service and the GUI button;
   it prints calibration (red warning + disclaimer), separates «Чтение: OK» from
   the quality verdict, adds the `Шкала 4/3/2/1` column, shows `res.symbology`,
-  renders the GS1 table as AI/element/display value/description, and
-  `build_history_pdf` builds the history export with read/GS1/quality columns. `ui.py` draws its own overlays
+  renders the GS1 table as AI/element/display value/description, optionally
+  adds a «Сведения о товаре (Честный знак)» table when `crpt_info` is passed,
+  and `build_history_pdf` builds the history export with read/GS1/quality
+  columns. `ui.py` draws its own overlays
   and shows a "Код не найден" banner; its "Экспорт TXT" button writes
   `scan_log` (all decoded contents this session, consecutive duplicates
   collapsed) as UTF-8 CRLF, one code per line.
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.39`) appears in the window title, CLI
+`VERSION` in `version.py` (currently `1.0.40`) appears in the window title, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.
@@ -241,12 +251,25 @@ the tag must match `version.py`. Docker builds the web service only.
   backgrounds / strong perspective may still fail.
 - `webui/` is served statically, so never write generated artifacts there.
 
-## Chestny Znak (ЧЗ) — offline by design
+## Chestny Znak (ЧЗ) — opt-in product lookup
 
-The app deliberately never calls ЧЗ; no integration should be added casually.
-From `docs/` (gitignored): there is **no token-free way** to look up product
-info by DataMatrix code — `/cises/info`, `/cises/list`, `/product/info` all need
-`Authorization: Bearer <token>`, and the token requires a participant account.
-Only `/participants?inns=...` and `/edo/inn/{inn}` are token-free and return no
-product data. If such a feature is ever wanted it must be opt-in, require
-credentials/network, and never be on by default.
+The app **never calls ЧЗ automatically**. Only an explicit action (GUI/Web
+button «Проверить в ЧЗ» or CLI `--crpt`) calls the undocumented public mobile
+endpoint:
+
+```
+POST https://mobile.api.crpt.ru/mobile/check
+{"code": "<raw marking code>", "codeType": "datamatrix"}
+```
+
+The request mimics the iOS app headers (`User-Agent`/`client`); plain GET is
+often rejected with 403. No token/auth is used. The endpoint may be geo-blocked
+outside RU or change without notice; `crpt.py` raises `CrptError`, the UI shows
+the message and the app keeps working offline. Never request on startup or
+analysis, never log codes, and never send codes automatically. True API token
+endpoints (`/cises/info`, `/product/info`, …) remain out of scope.
+
+`crpt.parse_response()` normalizes `codeFounded`/`checkResult`/`status`/
+`warning`, nested `<category>Data`, `catalogData` and dates; `lookup()` does the
+network call. `raw` stays server/GUI-side and is stripped from the Web API,
+CLI JSON and PDF. Web caches results in memory; GUI caches per session.

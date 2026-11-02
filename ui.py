@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps
 
+import crpt
 from config import load_settings, save_settings
 from verifier import (DEFAULT_UM_PER_PX, Result, analyze_all, calibration_note,
                       calibration_warning, fmt_ru, hri_content, imread_unicode,
@@ -141,6 +142,10 @@ class VerifierApp:
         self.history = []
         self.history_photos = []
         self.scan_log = []
+        self.crpt_cache = {}
+        self.crpt_info = None
+        self.crpt_busy = False
+        self._crpt_code = None
         self._pending_um = None
         self.settings = load_settings()
         saved_um = (self.settings.get("um_per_px")
@@ -371,6 +376,44 @@ class VerifierApp:
         self.chips_frame = ttk.Frame(data)
         self.chips_frame.pack(fill=tk.X, padx=4, pady=4)
 
+        # Product info tab (Chestny Znak, explicit request only)
+        product = ttk.Frame(self.notebook)
+        self.notebook.add(product, text=" Товар ")
+        product_top = ttk.Frame(product)
+        product_top.pack(fill=tk.X, padx=6, pady=(6, 2))
+        self.crpt_btn = ttk.Button(product_top, text="Проверить в ЧЗ",
+                                   command=self._crpt_lookup,
+                                   state=tk.DISABLED)
+        self.crpt_btn.pack(side=tk.LEFT)
+        self.crpt_status_var = tk.StringVar(value="Не проверено")
+        self.crpt_status_lbl = tk.Label(
+            product_top, textvariable=self.crpt_status_var,
+            font=("Segoe UI", 9, "bold"), fg="#78909c",
+            bg="#ffffff", anchor="w")
+        self.crpt_status_lbl.pack(side=tk.LEFT, padx=8)
+        tk.Label(product,
+                 text="Код будет отправлен в Честный знак "
+                      "(mobile.api.crpt.ru). Запрос выполняется только "
+                      "по этой кнопке.",
+                 font=("Segoe UI", 8), fg="#90a4ae", bg="#ffffff",
+                 wraplength=360, justify=tk.LEFT).pack(
+                     anchor="w", padx=8, pady=(0, 2))
+        product_btns = ttk.Frame(product)
+        product_btns.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 8))
+        ttk.Button(product_btns, text="Копировать сведения",
+                   command=self._copy_crpt).pack(side=tk.LEFT, padx=6)
+        crpt_frame = ttk.Frame(product)
+        crpt_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        self.crpt_text = tk.Text(crpt_frame, wrap="word",
+                                 font=("Consolas", 9), bd=0,
+                                 bg="#ffffff", state="disabled")
+        crpt_sb = ttk.Scrollbar(crpt_frame, orient="vertical",
+                                command=self.crpt_text.yview)
+        self.crpt_text.configure(yscrollcommand=crpt_sb.set)
+        self.crpt_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        crpt_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._set_crpt_text("Нет данных. Нажмите «Проверить в ЧЗ».")
+
         # Report tab
         report = ttk.Frame(self.notebook)
         self.notebook.add(report, text=" Отчет ")
@@ -531,6 +574,10 @@ class VerifierApp:
         self.result = self.results[idx]
         self.regions = problem_regions(self.result)
         self.focus_index = None
+        code = self.result.content_raw or ""
+        if code != self._crpt_code:
+            self._crpt_code = code
+            self._reset_crpt(code)
 
     def _on_select_code(self):
         idx = self.code_selector.current()
@@ -843,6 +890,122 @@ class VerifierApp:
         if text and text != "Нет данных для отчёта.":
             self._copy(text)
 
+    def _set_crpt_text(self, text):
+        self.crpt_text.configure(state="normal")
+        self.crpt_text.delete("1.0", tk.END)
+        self.crpt_text.insert("1.0", text)
+        self.crpt_text.configure(state="disabled")
+
+    def _reset_crpt(self, code=""):
+        self.crpt_info = None
+        self.crpt_busy = False
+        self.crpt_status_var.set("Не проверено" if code else "Нет кода")
+        self.crpt_status_lbl.configure(fg="#78909c")
+        self.crpt_btn.configure(state=tk.NORMAL if code else tk.DISABLED)
+        if code and code in self.crpt_cache:
+            self._show_crpt(self.crpt_cache[code])
+        else:
+            self._set_crpt_text(
+                "Нет данных. Нажмите «Проверить в ЧЗ»." if code
+                else "Сначала декодируйте код.")
+
+    def _crpt_lookup(self):
+        res = self.result
+        code = (res.content_raw if res else "") or ""
+        if not code or self.crpt_busy:
+            return
+        cached = self.crpt_cache.get(code)
+        if cached is not None:
+            self._show_crpt(cached)
+            return
+        self.crpt_busy = True
+        self.crpt_btn.configure(state=tk.DISABLED)
+        self.crpt_status_var.set("Запрос в Честный знак...")
+        self.crpt_status_lbl.configure(fg="#f9a825")
+        threading.Thread(target=self._crpt_worker, args=(code,),
+                         daemon=True).start()
+
+    def _crpt_worker(self, code):
+        try:
+            info = crpt.lookup(code)
+            self.crpt_cache[code] = info
+        except Exception as exc:  # network/HTTP/JSON: show, never crash
+            info = {"ok": False, "error": str(exc)}
+        self.root.after(0, lambda: self._crpt_done(code, info))
+
+    def _crpt_done(self, code, info):
+        if code != self._crpt_code:
+            return  # the user switched to another code meanwhile
+        self.crpt_busy = False
+        self.crpt_btn.configure(state=tk.NORMAL)
+        self._show_crpt(info)
+
+    def _show_crpt(self, info):
+        if info.get("error") or not info.get("ok", True):
+            self.crpt_status_var.set("Ошибка запроса")
+            self.crpt_status_lbl.configure(fg="#c62828")
+            self._set_crpt_text(
+                "Не удалось получить сведения:\n" + str(info.get("error", "")))
+            return
+        self.crpt_info = info
+        if info.get("found") and info.get("check"):
+            status, color = "Найден, проверка пройдена", "#2e7d32"
+        elif info.get("found"):
+            status, color = "Найден, проверка не пройдена", "#f9a825"
+        else:
+            status, color = "Не найден в ГИС МТ", "#c62828"
+        self.crpt_status_var.set(status)
+        self.crpt_status_lbl.configure(fg=color)
+        self._set_crpt_text(self._crpt_lines(info))
+
+    def _crpt_lines(self, info):
+        lines = [
+            "Источник: Честный знак (mobile.api.crpt.ru)",
+            f"Код: {info.get('code') or '—'}",
+            "",
+            f"Найден: {'да' if info.get('found') else 'нет'}",
+            f"Проверка: {'пройдена' if info.get('check') else 'не пройдена'}",
+            f"Криптопроверка: {'да' if info.get('verified') else 'нет'}",
+        ]
+        if info.get("blocked"):
+            lines.append("Код заблокирован: да")
+        fields = (
+            ("Статус", "status_text"),
+            ("Проверка кода", "check_status_text"),
+            ("Товар", "product_name"),
+            ("Категория", "category_text"),
+            ("Производитель", "producer"),
+            ("Владелец", "owner"),
+            ("ИНН владельца", "owner_inn"),
+            ("Бренд", "brand"),
+            ("Страна", "country"),
+            ("GTIN", "gtin"),
+            ("Серийный номер", "serial"),
+            ("Срок годности", "expiry"),
+            ("Дата производства", "produced"),
+            ("Сообщение", "message"),
+        )
+        for label, key in fields:
+            value = info.get(key)
+            if value:
+                lines.append(f"{label}: {value}")
+        if info.get("warning_text"):
+            lines.append(f"Предупреждение: {info['warning_text']}")
+        attrs = info.get("attributes") or {}
+        if attrs:
+            lines.append("")
+            lines.append("Дополнительно:")
+            for name, value in attrs.items():
+                lines.append(f"  {name}: {value}")
+        lines.append("")
+        lines.append("Сведения носят информационный характер.")
+        return "\n".join(lines)
+
+    def _copy_crpt(self):
+        text = self.crpt_text.get("1.0", "end-1c").strip()
+        if text and not text.startswith(("Нет данных", "Сначала", "Не удалось")):
+            self._copy(text)
+
     def _calibrate_by_xdim(self):
         res = self.result
         if not res or res.symbol is None or not getattr(res, "module_px_x", 0):
@@ -885,7 +1048,8 @@ class VerifierApp:
         if not path:
             return
         from report import build_pdf
-        build_pdf(self.result, self.frame_bgr, path)
+        build_pdf(self.result, self.frame_bgr, path,
+                  crpt_info=self.crpt_info)
         self._set_verdict("PDF сохранён", "#2e7d32", os.path.basename(path))
 
     def _export_txt(self):

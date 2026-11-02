@@ -75,7 +75,7 @@ def _clean_para(s):
     return "".join(ch if ch >= " " or ch in "\n\t\r" else " " for ch in s)
 
 
-def build_pdf(res, frame_bgr, path):
+def build_pdf(res, frame_bgr, path, crpt_info=None):
     """Write an official verification report to `path`."""
     _register_fonts()
     F = _FONTS["normal"]
@@ -261,6 +261,73 @@ def build_pdf(res, frame_bgr, path):
             ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cfd8dc")),
         ]))
         story.append(gt)
+
+    if crpt_info:
+        story.append(Spacer(1, 5 * mm))
+        story.append(Paragraph("Сведения о товаре (Честный знак)", s_h))
+        if crpt_info.get("error"):
+            err_style = ParagraphStyle(
+                "crpterr", fontName=FB, fontSize=9, leading=12,
+                textColor=colors.HexColor("#c62828"))
+            story.append(Paragraph(_clean_para(str(crpt_info["error"])),
+                                   err_style))
+        else:
+            cz_cell = ParagraphStyle("czcell", fontName=F, fontSize=8.5,
+                                     leading=11)
+            cz_head = ParagraphStyle("czhead", fontName=FB, fontSize=9,
+                                     leading=11, textColor=colors.white)
+            rows = []
+            rows.append(["Найден",
+                         "да" if crpt_info.get("found") else "нет"])
+            rows.append(["Проверка",
+                         "пройдена" if crpt_info.get("check")
+                         else "не пройдена"])
+            for label, key in (
+                    ("Статус", "status_text"),
+                    ("Товар", "product_name"),
+                    ("Категория", "category_text"),
+                    ("Производитель", "producer"),
+                    ("Владелец", "owner"),
+                    ("ИНН владельца", "owner_inn"),
+                    ("Бренд", "brand"),
+                    ("Страна", "country"),
+                    ("GTIN", "gtin"),
+                    ("Серийный номер", "serial"),
+                    ("Срок годности", "expiry"),
+                    ("Дата производства", "produced"),
+                    ("Сообщение", "message"),
+                    ("Предупреждение", "warning_text")):
+                value = crpt_info.get(key)
+                if value:
+                    rows.append([label, _clean_para(str(value))])
+            for name, value in (crpt_info.get("attributes") or {}).items():
+                rows.append([name, _clean_para(str(value))])
+            ct_data = [[Paragraph("Показатель", cz_head),
+                        Paragraph("Значение", cz_head)]]
+            ct_data += [[Paragraph(_clean_para(str(a)), cz_cell),
+                         Paragraph(_clean_para(str(b)), cz_cell)]
+                        for a, b in rows]
+            ct = Table(ct_data, colWidths=[48 * mm, 122 * mm],
+                       repeatRows=1)
+            ct.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, 0), FB),
+                ("FONTNAME", (0, 1), (-1, -1), F),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BACKGROUND", (0, 0), (-1, 0),
+                 colors.HexColor("#1a237e")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("BOX", (0, 0), (-1, -1), 0.8,
+                 colors.HexColor("#b0bec5")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.4,
+                 colors.HexColor("#cfd8dc")),
+            ]))
+            story.append(ct)
+        story.append(Paragraph(
+            "Источник: mobile.api.crpt.ru. Сведения носят информационный "
+            "характер и не являются официальным подтверждением.", s_small))
 
     def footer(canvas, docobj):
         canvas.saveState()

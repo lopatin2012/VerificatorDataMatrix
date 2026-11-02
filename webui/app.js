@@ -11,6 +11,7 @@ const state = {
   focus: null,
   history: [],
   showOverlay: true,
+  crptCode: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -233,6 +234,7 @@ function render(data) {
   renderCodeSelect();
   if (state.results.length) {
     renderResult(state.results[0]);
+    if (data.crpt) renderCrpt(data.crpt);
   } else {
     renderEmpty(data);
   }
@@ -260,6 +262,9 @@ function renderEmpty(data) {
   renderData({});
   $("reporttext").textContent = "";
   $("pdfbtn").disabled = true;
+  state.crptCode = null;
+  resetCrpt();
+  $("crptbtn").disabled = true;
 }
 
 function renderParamsEmpty() {
@@ -332,6 +337,12 @@ function renderResult(r) {
   renderData(r);
   renderReport(r);
   $("pdfbtn").disabled = false;
+  const code = r.content_raw || "";
+  if (code !== state.crptCode) {
+    state.crptCode = code;
+    resetCrpt();
+  }
+  $("crptbtn").disabled = !code;
 }
 
 function renderParams(data) {
@@ -443,6 +454,76 @@ function renderData(data) {
   });
   $("copyall").disabled = !(data.content);
   if ($("copyhri")) $("copyhri").disabled = !(data.content_hri);
+}
+
+function setCrptStatus(text, color) {
+  const el = $("crptstatus");
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = color || "#78909c";
+}
+
+function resetCrpt() {
+  setCrptStatus("Не проверено", "#78909c");
+  const box = $("crptinfo");
+  if (box) box.innerHTML = "";
+}
+
+function crptRow(label, value) {
+  const row = document.createElement("div");
+  row.className = "crptrow";
+  const key = document.createElement("div");
+  key.className = "crptkey";
+  key.textContent = label;
+  const val = document.createElement("div");
+  val.className = "crptval";
+  val.textContent = value;
+  row.appendChild(key);
+  row.appendChild(val);
+  return row;
+}
+
+function renderCrpt(info) {
+  const box = $("crptinfo");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!info || info.error || info.ok === false) {
+    setCrptStatus("Ошибка запроса", "#c62828");
+    box.appendChild(crptRow("Ошибка",
+      info && info.error ? info.error : "неизвестная ошибка"));
+    return;
+  }
+  if (info.found && info.check) {
+    setCrptStatus("Найден, проверка пройдена", "#2e7d32");
+  } else if (info.found) {
+    setCrptStatus("Найден, проверка не пройдена", "#f9a825");
+  } else {
+    setCrptStatus("Не найден в ГИС МТ", "#c62828");
+  }
+  const fields = [
+    ["Статус", info.status_text],
+    ["Проверка кода", info.check_status_text],
+    ["Товар", info.product_name],
+    ["Категория", info.category_text],
+    ["Производитель", info.producer],
+    ["Владелец", info.owner],
+    ["ИНН владельца", info.owner_inn],
+    ["Бренд", info.brand],
+    ["Страна", info.country],
+    ["GTIN", info.gtin],
+    ["Серийный номер", info.serial],
+    ["Срок годности", info.expiry],
+    ["Дата производства", info.produced],
+    ["Сообщение", info.message],
+    ["Предупреждение", info.warning_text],
+  ];
+  fields.forEach(([label, value]) => {
+    if (value) box.appendChild(crptRow(label, value));
+  });
+  const attrs = info.attributes || {};
+  Object.keys(attrs).forEach(name => {
+    box.appendChild(crptRow(name, attrs[name]));
+  });
 }
 
 function renderReport(data) {
@@ -650,6 +731,41 @@ function wireCalibration() {
   });
 }
 
+function wireCrpt() {
+  const btn = $("crptbtn");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    const cur = state.results[state.current];
+    if (!cur || !cur.result_id) return;
+    const rid = cur.result_id;
+    btn.disabled = true;
+    setCrptStatus("Запрос в Честный знак...", "#f9a825");
+    const box = $("crptinfo");
+    if (box) box.innerHTML = "";
+    try {
+      const resp = await fetch("api/crpt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ result_id: rid }),
+      });
+      let data = {};
+      try { data = await resp.json(); } catch (e) { /* non-JSON */ }
+      if (!resp.ok) {
+        renderCrpt({ ok: false, error: data.error || ("HTTP " + resp.status) });
+        return;
+      }
+      // Ignore a late response if the user switched to another code.
+      const now = state.results[state.current];
+      if (!now || now.result_id !== rid) return;
+      renderCrpt(data);
+    } catch (e) {
+      renderCrpt({ ok: false, error: "Ошибка сети: " + e });
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 function wireControls() {
   $("zoomin").addEventListener("click", () => { state.zoom = Math.min(4, state.zoom + 0.25); drawScene(); });
   $("zoomout").addEventListener("click", () => { state.zoom = Math.max(0.5, state.zoom - 0.25); drawScene(); });
@@ -715,6 +831,7 @@ fetchVersion();
 wireDropzone();
 wireCamera();
 wireCalibration();
+wireCrpt();
 wireControls();
 wireHistoryExports();
 loadHistory();

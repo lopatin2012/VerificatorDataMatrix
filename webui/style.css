@@ -175,6 +175,12 @@ hr { border: none; border-top: 1px solid var(--line); width: 100%; margin: 10px 
 }
 .chip .cname { font-size: 11px; font-weight: 700; color: var(--accent); }
 .chip .cval { font-size: 13px; font-family: Consolas, monospace; }
+.crptnote { font-size: 11px; color: var(--muted); margin: 4px 0 2px; }
+.crptstatus { font-size: 12px; font-weight: 700; margin: 2px 0 6px; }
+.crptinfo { font-size: 12px; }
+.crptrow { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.crptkey { flex: 0 0 130px; color: var(--muted); }
+.crptval { flex: 1; word-break: break-word; }
 .chip .ccopy {
   display: block; margin-top: 5px; border: none; background: #eceff1;
   border-radius: 5px; padding: 3px 8px; font-size: 11px; cursor: pointer;
