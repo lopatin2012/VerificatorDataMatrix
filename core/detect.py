@@ -9,13 +9,18 @@ class Symbol:
         self.corners = None      # 4x2 quad (image coords)
         self.rows = 0
         self.cols = 0
+        # Module pitch in ORIGINAL image pixels (not in warp coordinates).
         self.module_px = 0.0
+        self.module_px_x = 0.0   # canonical X axis
+        self.module_px_y = 0.0   # canonical Y axis
         self.grid = None         # bool (rows x cols) dark/light, canonical
         self.reflectance = None  # float (rows x cols)
         self.inverted = False
         self.l_corner = None     # 'tl' | 'tr' | 'bl' | 'br'
         self.can_bw = None       # canonical binarized warped (dark=True)
         self.can_rect = None     # symbol rect (x0, y0, x1, y1) in can_bw
+        self.orientation = 0     # rot90 applied to the warped image
+        self.quiet_zone = None   # modules of clear space around the symbol
 
 
 def _binarize(gray):
@@ -188,7 +193,17 @@ def extract_grid(gray, corners, warp_size=800, known_size=None):
             return None
 
     c_x0, c_y0, c_x1, c_y1 = cr
-    mod = max((c_x1 - c_x0) / n_cols, (c_y1 - c_y0) / n_rows)
+
+    # Module pitch along each canonical axis, measured back in the ORIGINAL
+    # image. The warp maps the candidate quad onto an arbitrary 800x800
+    # square, so warp-space pixel counts are meaningless as physical sizes
+    # (they used to leak into the micron dimensions and the aperture choice).
+    mid_x = 0.5 * (c_x0 + c_x1)
+    mid_y = 0.5 * (c_y0 + c_y1)
+    mod_x = _canonical_pitch(Minv, ori, warp_size,
+                             (c_x0, mid_y), (c_x1, mid_y), n_cols)
+    mod_y = _canonical_pitch(Minv, ori, warp_size,
+                             (mid_x, c_y0), (mid_x, c_y1), n_rows)
 
     # Sample per-module reflectance by averaging the warped grayscale over
     # each module cell in the canonical frame.
@@ -212,7 +227,9 @@ def extract_grid(gray, corners, warp_size=800, known_size=None):
     sym.corners = quad
     sym.rows = n_rows
     sym.cols = n_cols
-    sym.module_px = mod
+    sym.module_px_x = mod_x
+    sym.module_px_y = mod_y
+    sym.module_px = 0.5 * (mod_x + mod_y)
     sym.orientation = ori
     sym.reflectance = ref
     sym.can_bw = np.rot90(bw, ori)
@@ -222,6 +239,116 @@ def extract_grid(gray, corners, warp_size=800, known_size=None):
     sym.l_corner = corner_name
     sym.inverted = inverted
     return sym
+
+
+def _canonical_pitch(Minv, ori, warp_size, a, b, n):
+    """Physical module pitch (source pixels) between two canonical points."""
+    if n <= 0:
+        return 0.0
+    p0 = _warp_to_src(Minv, *_unrotate(a[0], a[1], ori, warp_size))
+    p1 = _warp_to_src(Minv, *_unrotate(b[0], b[1], ori, warp_size))
+    d = float(np.hypot(*(p1 - p0)))
+    return d / n if np.isfinite(d) else 0.0
+
+
+def _warp_to_src(Minv, x, y):
+    p = Minv @ np.array([x, y, 1.0], dtype=np.float64)
+    if abs(p[2]) < 1e-12:
+        return np.array([np.nan, np.nan])
+    return p[:2] / p[2]
+
+
+def measure_quiet_zone(gray, sym, warp_size=800, margin_modules=4.0):
+    """Narrowest quiet zone around a symbol, in modules.
+
+    Warps the source image a second time, this time with a margin around the
+    symbol quad, so the clean area can be measured without the symbol's own
+    modules being mistaken for a marking. Returns None when it cannot be
+    measured (e.g. the symbol was rebuilt without a warped rectangle).
+    """
+    ref = sym.reflectance
+    grid = sym.grid
+    if (sym.can_rect is None or ref is None or grid is None
+            or sym.corners is None or sym.rows < 4 or sym.cols < 4):
+        return None
+    dark = ref[grid]
+    light = ref[~grid]
+    if dark.size == 0 or light.size == 0:
+        return None
+    dark_ref = float(np.median(dark))
+    light_ref = float(np.median(light))
+    contrast = abs(light_ref - dark_ref)
+    if contrast < 8.0:
+        return None
+    # For white-on-dark symbols the quiet zone is the dark background.
+    bg = dark_ref if sym.inverted else light_ref
+    thr = max(10.0, 0.30 * contrast)
+
+    x0, y0, x1, y1 = sym.can_rect
+    mod_x = max(1.0, (x1 - x0) / sym.cols)
+    mod_y = max(1.0, (y1 - y0) / sym.rows)
+    margin = int(round(margin_modules * max(mod_x, mod_y)))
+    if margin < 2:
+        return None
+    canvas = warp_size + 2 * margin
+
+    quad = np.asarray(sym.corners, dtype=np.float32).reshape(4, 2)
+    dst = np.array([[0, 0], [warp_size, 0], [warp_size, warp_size],
+                    [0, warp_size]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(quad, dst)
+    M2 = np.array([[1, 0, margin], [0, 1, margin], [0, 0, 1]],
+                  dtype=np.float64) @ M
+    expanded = cv2.warpPerspective(gray, M2, (canvas, canvas))
+    exp = np.rot90(expanded, sym.orientation)
+
+    # Symbol rect in the expanded canonical frame.
+    ex0, ey0 = int(round(x0)) + margin, int(round(y0)) + margin
+    ex1, ey1 = int(round(x1)) + margin, int(round(y1)) + margin
+    H, W = exp.shape[:2]
+
+    def gap(samples, skip):
+        """Distance (warp px) from the edge to the first marking.
+
+        `skip` ignores the anti-aliased symbol edge itself, which would
+        otherwise register as a marking one pixel outside the quad.
+        """
+        for d, v in samples:
+            if d <= skip:
+                continue
+            if abs(float(v) - bg) > thr:
+                return d
+        return None
+
+    skip_x = max(1, int(round(0.35 * mod_x)))
+    skip_y = max(1, int(round(0.35 * mod_y)))
+    sides = []
+    # left / right: scan whole columns, starting just outside the symbol
+    for frac in (0.2, 0.35, 0.5, 0.65, 0.8):
+        y = ey0 + int(round((ey1 - ey0) * frac))
+        if not (0 <= y < H):
+            continue
+        left = [(ex0 - x, exp[y, x])
+                for x in range(ex0 - 1, max(0, ex0 - margin) - 1, -1)]
+        right = [(x - ex1, exp[y, x])
+                 for x in range(ex1 + 1, min(W - 1, ex1 + margin) + 1)]
+        for d in (gap(left, skip_x), gap(right, skip_x)):
+            if d is not None:
+                sides.append(d / mod_x)
+    # top / bottom
+    for frac in (0.2, 0.35, 0.5, 0.65, 0.8):
+        x = ex0 + int(round((ex1 - ex0) * frac))
+        if not (0 <= x < W):
+            continue
+        top = [(ey0 - y, exp[y, x])
+               for y in range(ey0 - 1, max(0, ey0 - margin) - 1, -1)]
+        bottom = [(y - ey1, exp[y, x])
+                  for y in range(ey1 + 1, min(H - 1, ey1 + margin) + 1)]
+        for d in (gap(top, skip_y), gap(bottom, skip_y)):
+            if d is not None:
+                sides.append(d / mod_y)
+    if not sides:
+        return None
+    return max(0.0, min(4.0, min(sides)))
 
 
 def _find_l(bw, thr=0.8):

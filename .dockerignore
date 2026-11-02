@@ -7,5 +7,6 @@ test_image_codes
 samples
 models
 training
+tools
 *.pyc
 *.log

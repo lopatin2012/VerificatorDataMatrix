@@ -211,7 +211,7 @@ def grade_symbol(sym, decoded):
 
     # quiet zone check
     qz = _quiet_zone(sym)
-    params.append(Param("Левая свободная зона", f"{qz:.1f}x", _grade_quiet_zone(qz)))
+    params.append(Param("Свободная зона", f"{qz:.1f}x", _grade_quiet_zone(qz)))
 
     # unused error correction / error-correction margin
     params.append(Param("Запас коррекции ошибок", f"{uec_pct:.0f}%",
@@ -230,14 +230,18 @@ def overall_grade(params):
 
 
 def _axial_nonuniformity(sym):
-    mod = sym.module_px
-    if mod <= 0:
-        return 100.0
-    row = sym.reflectance[0]
-    col = sym.reflectance[:, 0]
-    if row.size < 8 or col.size < 8:
-        return 6.0
-    return min(100.0, abs(sym.cols - sym.rows) / max(1, min(sym.cols, sym.rows)) * 100.0)
+    """ISO 15415 axial non-uniformity: |X-dim - Y-dim| / mean X,Y.
+
+    Compares the physical module pitch along the two symbol axes. Comparing
+    the module COUNTS (rows vs cols) was wrong: it made every rectangular
+    ECC200 symbol (e.g. 12x26) fail with 100% axial non-uniformity.
+    """
+    mod_x = float(getattr(sym, "module_px_x", 0.0) or 0.0)
+    mod_y = float(getattr(sym, "module_px_y", 0.0) or 0.0)
+    if mod_x <= 0 or mod_y <= 0:
+        return 0.0
+    mean = 0.5 * (mod_x + mod_y)
+    return min(100.0, abs(mod_x - mod_y) / mean * 100.0)
 
 
 def _grid_nonuniformity(sym):
@@ -345,11 +349,12 @@ def _pattern_damage(sym):
 
 
 def _quiet_zone(sym):
-    """Quiet zone width relative to module size."""
-    qz = 0.0
-    # use the module pitch as proxy from corners
-    mod = sym.module_px
-    if mod <= 0:
-        return 0.0
-    # fraction of module along a side covered by the symbol extent
-    return 1.0
+    """Quiet zone width in modules, measured during grid extraction.
+
+    Falls back to 1.0 (the ECC200 requirement) for symbols rebuilt from
+    dotted codes, where the surrounding clean area is not measured.
+    """
+    qz = getattr(sym, "quiet_zone", None)
+    if qz is None or qz < 0:
+        return 1.0
+    return qz

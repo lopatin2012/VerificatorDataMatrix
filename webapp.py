@@ -14,6 +14,7 @@ import time
 import uuid
 
 import cv2
+import numpy as np
 from flask import (Flask, Response, jsonify, request, send_file,
                    send_from_directory)
 from PIL import Image
@@ -114,16 +115,16 @@ def static_files(filename):
     return send_from_directory(WEBUI_DIR, filename)
 
 
+@app.errorhandler(413)
+def _too_large(_exc):
+    return jsonify({"error": "Файл больше 25 МБ"}), 413
+
+
 def _decode_image(data):
-    arr = np_from_bytes(data)
-    if arr is None:
+    if not data:
         return None
+    arr = np.frombuffer(data, dtype=np.uint8)
     return cv2.imdecode(arr, cv2.IMREAD_COLOR)
-
-
-def np_from_bytes(data):
-    import numpy as np
-    return np.frombuffer(data, dtype=np.uint8)
 
 
 @app.post("/api/analyze")

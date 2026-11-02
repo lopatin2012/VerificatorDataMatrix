@@ -66,6 +66,30 @@ def _run_checks():
     check("gs1: raw bytes with GS parse to same AIs",
           [e.ai for e in raw] == ["01", "21", "93"],
           str([(e.ai, e.value) for e in raw]))
+    # A GS separator must end a variable field even when the value itself
+    # contains digits that look like an AI.
+    gs = parse(b"0100012345600012\x1d10LOT21X\x1d21SER")
+    check("gs1: GS separator ends a variable-length field",
+          [(e.ai, e.value) for e in gs]
+          == [("01", "00012345600012"), ("10", "LOT21X"), ("21", "SER")],
+          str([(e.ai, e.value) for e in gs]))
+    check("gs1: HRI values keep their characters",
+          [(e.ai, e.value) for e in parse("(01)00012345600012(10)LOT21X")]
+          == [("01", "00012345600012"), ("10", "LOT21X")])
+    # 4-digit measurement AI (310n = net weight) + fixed length.
+    weight = parse(b"3103000123")
+    check("gs1: pattern AI 310n parsed as fixed 6 digits",
+          [(e.ai, e.value) for e in weight] == [("3103", "000123")]
+          and validate(weight) == [],
+          str([(e.ai, e.value) for e in weight]))
+    bad_date = parse("(17)251332")
+    check("gs1: impossible date flagged",
+          any("некорректн" in w for w in validate(bad_date)),
+          str(validate(bad_date)))
+    ok_date = parse("(17)251231")
+    check("gs1: valid date accepted",
+          not any("некорректн" in w for w in validate(ok_date)),
+          str(validate(ok_date)))
 
     # --- end-to-end decode: solid + dotted + inverted synthetic symbols ---
     mod = _module_map("HELLO-DM")
@@ -79,6 +103,47 @@ def _run_checks():
         check(f"decode {tag}", res.content == "HELLO-DM",
               f"content={res.content!r} validation={res.validation} "
               f"error={res.error}")
+
+    # --- geometry and grading regressions ---
+    # 10 px modules at 10 um/px must report a 100 um X-dimension, not the
+    # warp-space pitch (the old code reported ~550 um).
+    res = analyze(_render_solid(mod, quiet=3))
+    check("geometry: X/Y dimension is in source microns",
+          res.x_dim_um is not None and abs(res.x_dim_um - 100) < 3
+          and abs(res.y_dim_um - 100) < 3,
+          f"x={res.x_dim_um} y={res.y_dim_um}")
+    qz = next((p for p in res.params if p.name == "Свободная зона"), None)
+    qz_value = None
+    if qz is not None:
+        try:
+            qz_value = float(qz.value.rstrip("x"))
+        except ValueError:
+            qz_value = None
+    check("geometry: quiet zone measured from the image",
+          qz_value is not None and qz_value >= 2.5 and qz.grade >= 3,
+          f"{qz.value if qz else None} (grade {qz.grade if qz else None})")
+    # A code printed flush to the image border must not look like it has a
+    # 1-module quiet zone (the old fallback returned 1.0 for everything).
+    tight = analyze(_render_solid(mod, quiet=0))
+    tight_qz = next((p for p in tight.params
+                     if p.name == "Свободная зона"), None)
+    check("geometry: missing quiet zone is reported",
+          tight_qz is not None and tight_qz.grade <= 2,
+          f"{tight_qz.value if tight_qz else None} "
+          f"(grade {tight_qz.grade if tight_qz else None})")
+
+    # Rectangular ECC200 symbols used to grade 0 because rows/cols were
+    # compared as if they were the X/Y module pitch.
+    rect = analyze(_render_solid(_module_map("A" * 20)))
+    check("geometry: rectangular symbol decodes", rect.content == "A" * 20,
+          f"content={rect.content!r} error={rect.error}")
+    check("grade: rectangular aspect does not zero the grade",
+          rect.min_grade is not None and rect.min_grade >= 3,
+          f"grade={rect.min_grade}")
+    check("geometry: rectangular symbol has square modules",
+          rect.x_dim_um is not None and abs(rect.x_dim_um - 100) < 3
+          and abs(rect.y_dim_um - 100) < 3,
+          f"x={rect.x_dim_um} y={rect.y_dim_um}")
 
     return checks
 

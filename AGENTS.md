@@ -22,10 +22,13 @@ is wrong in this checkout.
 
 # GUI (also the default when none of --file/--dir/--web is given)
 .venv\Scripts\python.exe main.py --gui
+# GUI with a file already loaded (tools\quick_open.bat drag-and-drop)
+.venv\Scripts\python.exe main.py --gui --file samples/G4_1.jpg
 
-# one image / a directory of images
+# one image / a directory of images (all codes; --json for automation)
 .venv\Scripts\python.exe main.py --file samples/G4_1.jpg
 .venv\Scripts\python.exe main.py --dir test_image_codes
+.venv\Scripts\python.exe main.py --dir test_image_codes --json
 
 # web service (Flask app served by waitress)
 .venv\Scripts\python.exe main.py --web --host 0.0.0.0 --port 8000
@@ -63,8 +66,11 @@ typecheck, formatter, or codegen config — don't invent one.
 ## Testing
 
 `main.py --selftest` (`selftest.py`) is self-contained: GS1 parsing/validation
-plus synthetic solid, dotted, and inverted DataMatrix decode (8 checks). Real
-images are not in git, so still verify decode/geometry changes manually against
+(including GS-separated variable fields and dates) plus synthetic solid, dotted,
+and inverted DataMatrix decode and geometry/grading regressions (19 checks). It
+asserts that dimensions are reported in source microns and that a rectangular
+ECC200 symbol (12x26) is not penalised for its aspect ratio. Real images are not
+in git, so still verify decode/geometry changes manually against
 `test_image_codes/` or the owner's `samples/`. CI
 (`.github/workflows/ci.yml`) runs the same command on Ubuntu after installing
 `libgl1`/`libglib2.0-0`.
@@ -72,6 +78,16 @@ images are not in git, so still verify decode/geometry changes manually against
 ## Architecture
 
 - `main.py` — argparse entry: GUI, web, CLI, selftest. Defaults to GUI.
+  `--gui --file PATH` opens the GUI with that image already analyzed
+  (`ui.main(initial_file=...)` → `VerifierApp.open_path`); `--gui --dir` and
+  `--json --gui` are rejected. The CLI prints **all** codes per image and exits
+  1 if any image decoded nothing; `--json` emits `[{file, results:[to_dict]}]`
+  (or `{file, error}`) for automation.
+- `tools/` — Windows drag-and-drop launchers (not bundled into the exe):
+  `quick_open.bat` → `main.py --gui --file`, `quick_check.bat` → console
+  `main.py --file` with `pause`. They resolve the repo root as `..` and use the
+  repo `.venv` (prefer `pythonw.exe` for the GUI). Keep paths quoted so
+  Cyrillic/space paths work.
 - `verifier.analyze_all(img)` is the pipeline entry: decode + grid + grades +
   GS1 for **every** symbol, returning a list of `Result` sorted best-first
   (decoded/higher grade first); `analyze(img)` returns the first or an error
@@ -101,15 +117,23 @@ images are not in git, so still verify decode/geometry changes manually against
   crops with local Otsu. Symbol reflectance is inverted so `grade.py`'s
   "dark module = low reflectance" assumption holds.
 - `core/detect.py` — L-pattern locator (zxing positions + run-based fallback)
-  and perspective-warp grid extraction; tries both polarities.
+  and perspective-warp grid extraction; tries both polarities. `module_px` and
+  `module_px_x/y` are in **source image pixels**, not in the 800-px warp frame
+  (the warp is an arbitrary square and must not leak into microns/aperture).
+  `measure_quiet_zone()` re-warps with a margin and runs once per final symbol
+  from `verifier._analyze_one`; `Symbol.quiet_zone` is in modules. For dotted
+  symbols it stays `None` and `grade.py` falls back to 1.0.
 - `core/nn_locator.py` — optional ResNet18 corner regressor, lazy `torch`
   import; missing torch is silently ignored. Last-resort crop-then-decode.
 - `core/grade.py` — parameter grades 0–4, overall = minimum. Thresholds are
   approximate (see Known gaps). Parameter names are exact Russian strings that
   `problem_regions` and the UI match; renaming one silently breaks the heatmap.
-- `gs1.py` — parses AIs from raw bytes or HRI; `validate()` returns warnings
-  (unknown AI, fixed-length mismatch, GTIN/SSCC mod-10), surfaced as
-  `Result.gs1_warnings`.
+  Axial non-uniformity compares the physical **module pitch** along X/Y, never
+  the row/column counts (that zeroed every rectangular ECC200 symbol).
+- `gs1.py` — parses AIs from raw bytes or HRI; a GS/FNC1 separator is
+  authoritative for variable-length fields. Supports pattern AIs (310n–316n,
+  390n–395n). `validate()` returns warnings (unknown AI, fixed-length mismatch,
+  impossible dates, GTIN/SSCC mod-10), surfaced as `Result.gs1_warnings`.
 - Copy paths preserve the GS separator `\x1d` (only FS `\x1c`/RS `\x1e` are
   stripped): `plain_content()` feeds `content_raw`/`content_plain`. GUI and web
   copy the raw string and only render `[GS]` on screen. Don't strip `\x1d` —
@@ -132,7 +156,7 @@ images are not in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.33`) appears in the window title, CLI
+`VERSION` in `version.py` (currently `1.0.35`) appears in the window title, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.

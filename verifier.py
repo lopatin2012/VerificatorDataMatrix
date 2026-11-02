@@ -95,6 +95,15 @@ def _analyze_one(img, dec, um_per_px):
     res.ok = True
     res.corner_points = sym.corners
 
+    # Quiet zone needs the surrounding image (it lies outside the symbol
+    # quad), so it is measured here once per final symbol rather than during
+    # the many grid-rebuild attempts in the decoder.
+    if getattr(sym, "quiet_zone", None) is None:
+        try:
+            sym.quiet_zone = detect.measure_quiet_zone(gray, sym)
+        except Exception:
+            sym.quiet_zone = None
+
     if dec.ok:
         res.content = dec.text
         res.content_raw = dec.bytes.decode("latin-1") if dec.bytes else None
@@ -104,9 +113,13 @@ def _analyze_one(img, dec, um_per_px):
     params = grade.grade_symbol(sym, decoded=dec.ok)
     res.params = params
 
-    mod_um = sym.module_px * um_per_px
-    res.x_dim_um = mod_um
-    res.y_dim_um = mod_um * (sym.rows / sym.cols)
+    # Physical module pitch per axis (sym.module_px_* is in source pixels;
+    # this used to be the warp-space pitch, inflating dimensions ~5x).
+    mod_x = getattr(sym, "module_px_x", 0.0) or sym.module_px
+    mod_y = getattr(sym, "module_px_y", 0.0) or sym.module_px
+    res.x_dim_um = mod_x * um_per_px
+    res.y_dim_um = mod_y * um_per_px
+    mod_um = 0.5 * (res.x_dim_um + res.y_dim_um)
 
     gx = gy = (0.0, 0.0)
     for p in params:
@@ -291,6 +304,7 @@ def problem_regions(res):
     add("Неоднородность освещения", "Неравномерность освещения",
         sub_quad(0.0, 0.0, 1.0, 0.5))
     add("Запас коррекции ошибок", "Малый запас коррекции", whole)
+    add("Свободная зона", "Малая свободная зона", whole)
     add("Декодирование", "Код не декодируется", whole)
 
     # dedupe identical polygons

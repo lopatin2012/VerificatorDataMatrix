@@ -366,13 +366,18 @@ class VerifierApp:
         path = filedialog.askopenfilename(
             filetypes=[("Images", "*.jpg *.jpeg *.png *.bmp *.tif *.tiff")])
         if path:
-            bgr = imread_unicode(path, cv2.IMREAD_COLOR)
-            if bgr is None:
-                self._set_verdict("Ошибка чтения файла", "#c62828", "Не удалось открыть файл")
-                return
-            self.file_var.set(os.path.basename(path))
-            self.frame_bgr = bgr
-            self._start_analysis()
+            self.open_path(path)
+
+    def open_path(self, path):
+        """Open a known image path (used by tools/ launchers)."""
+        bgr = imread_unicode(path, cv2.IMREAD_COLOR)
+        if bgr is None:
+            self._set_verdict("Ошибка чтения файла", "#c62828",
+                              f"Не удалось открыть файл: {path}")
+            return
+        self.file_var.set(os.path.basename(path))
+        self.frame_bgr = bgr
+        self._start_analysis()
 
     def toggle_camera(self):
         if self.capture is None:
@@ -901,10 +906,13 @@ class VerifierApp:
         self._set_verdict("—", "#607d8b", "Откройте файл или включите камеру")
 
 
-def main():
+def main(initial_file=None):
     root = tk.Tk()
     app = VerifierApp(root)
     root.protocol("WM_DELETE_WINDOW", lambda: (app.close(), root.destroy()))
+    if initial_file:
+        # Analyze after the window exists so the result is rendered, not lost.
+        root.after(50, lambda: app.open_path(initial_file))
     root.mainloop()
 
 
