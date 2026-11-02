@@ -38,7 +38,7 @@ def _no_cache(resp):
     """Prevent browser from caching HTML/JS/CSS so updates are visible immediately."""
     if request.path.startswith("/api/"):
         resp.headers["Cache-Control"] = "no-store"
-    elif request.path.endswith((".html", ".js", ".css")):
+    elif request.path == "/" or request.path.endswith((".html", ".js", ".css")):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 
