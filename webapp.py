@@ -136,35 +136,24 @@ def _decode_image(data):
     return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
 
-@app.post("/api/analyze")
-def api_analyze():
-    f = request.files.get("image")
-    if f is None:
-        return jsonify({"error": "Изображение не получено"}), 400
-    img = _decode_image(f.read())
-    if img is None or img.size == 0:
-        return jsonify({"error": "Не удалось прочитать изображение"}), 400
-
-    raw_um = (request.form.get("um_per_px") or "").strip()
-    um = None
-    if raw_um:
-        try:
-            um = float(raw_um.replace(",", "."))
-        except ValueError:
-            return jsonify({"error": "Некорректная калибровка"}), 400
-        if um <= 0:
-            return jsonify({"error": "Калибровка должна быть больше нуля"}), 400
-
+def _parse_calibration(raw):
+    """Return (um_per_px or None, error_message or None)."""
+    if raw is None:
+        return None, None
+    raw = str(raw).strip()
+    if not raw:
+        return None, None
     try:
-        with ANALYZE_LOCK:
-            results = analyze_all(img, um_per_px=um)
-    except Exception as exc:
-        return jsonify({"error": f"Ошибка анализа: {exc}"}), 500
+        um = float(raw.replace(",", "."))
+    except ValueError:
+        return None, "Некорректная калибровка"
+    if um <= 0:
+        return None, "Калибровка должна быть больше нуля"
+    return um, None
 
-    if not results:
-        return jsonify({"error": "Код не найден",
-                        "image": _image_data_url(img)}), 200
 
+def _store_results(img, results):
+    """Store analyzed results and build the /api/analyze payload."""
     payload = {"image": "", "results": []}
     for res in results:
         rid = uuid.uuid4().hex[:12]
@@ -181,10 +170,54 @@ def api_analyze():
                 old = RESULTS_ORDER.pop(0)
                 RESULTS.pop(old, None)
         payload["results"].append(d)
-
-    # base image (no overlay); heatmap is drawn client-side for interactivity
     payload["image"] = _image_data_url(img)
+    return payload
 
+
+def _analyze_payload(img, um):
+    try:
+        with ANALYZE_LOCK:
+            results = analyze_all(img, um_per_px=um)
+    except Exception as exc:
+        return None, f"Ошибка анализа: {exc}"
+    if not results:
+        return {"error": "Код не найден", "image": _image_data_url(img)}, None
+    return _store_results(img, results), None
+
+
+@app.post("/api/analyze")
+def api_analyze():
+    f = request.files.get("image")
+    if f is None:
+        return jsonify({"error": "Изображение не получено"}), 400
+    img = _decode_image(f.read())
+    if img is None or img.size == 0:
+        return jsonify({"error": "Не удалось прочитать изображение"}), 400
+
+    um, error = _parse_calibration(request.form.get("um_per_px"))
+    if error:
+        return jsonify({"error": error}), 400
+    payload, error = _analyze_payload(img, um)
+    if error:
+        return jsonify({"error": error}), 500
+    return jsonify(payload)
+
+
+@app.post("/api/reanalyze")
+def api_reanalyze():
+    """Re-run analysis of a stored image with a new calibration."""
+    data = request.get_json(silent=True) or {}
+    rid = data.get("result_id")
+    with ANALYZE_LOCK:
+        entry = RESULTS.get(rid)
+    if entry is None:
+        return jsonify({"error": "Результат не найден (истёк)"}), 404
+    um, error = _parse_calibration(data.get("um_per_px"))
+    if error:
+        return jsonify({"error": error}), 400
+    payload, error = _analyze_payload(entry["img"], um)
+    if error:
+        return jsonify({"error": error}), 500
     return jsonify(payload)
 
 

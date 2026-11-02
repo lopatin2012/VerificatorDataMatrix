@@ -162,10 +162,11 @@ def _grade_quiet_zone(qz):
     return 0
 
 
-def grade_symbol(sym, decoded):
+def grade_symbol(sym, decoded, uec=None):
     """Compute graded parameters from a reconstructed Symbol.
 
     `decoded` is a bool: whether the content decoded successfully.
+    `uec` is zxing's unused-error-correction ratio (0..1), when available.
     Returns a list of Param objects.
     """
     params = []
@@ -188,7 +189,20 @@ def grade_symbol(sym, decoded):
     # decoding / unused error correction
     if decoded:
         dec_grade = 4
-        uec_pct = max(0.0, min(100.0, sc_pct - 20))
+        uec_pct = None
+        if uec is not None:
+            try:
+                uec_value = float(uec)
+            except (TypeError, ValueError):
+                uec_value = None
+            if uec_value is not None:
+                # zxing reports a 0..1 ratio; tolerate a percentage too.
+                uec_pct = (uec_value * 100.0 if uec_value <= 1.0
+                           else uec_value)
+                uec_pct = max(0.0, min(100.0, uec_pct))
+        if uec_pct is None:
+            # Fallback for paths without zxing metadata (grid/dotted).
+            uec_pct = max(0.0, min(100.0, sc_pct - 20))
     else:
         dec_grade = 0
         uec_pct = 0.0

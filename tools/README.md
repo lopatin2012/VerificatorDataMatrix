@@ -1,8 +1,8 @@
-# tools — быстрые лаунчеры
+# tools — лаунчеры и калибровка
 
 Скрипты предполагают, что рядом с репозиторием есть `.venv` с зависимостями
-(см. основной `README.md`). Лаунчеры Windows: поднять веб-сервис или получить
-консольный отчёт.
+(см. основной `README.md`). Здесь: поднять веб-сервис, получить консольный
+отчёт и сравнить грейды с размеченным набором.
 
 ## `quick_web.bat` — быстрый запуск сервера
 
@@ -45,6 +45,29 @@ DataMatrix-кодам в изображении (содержимое, GS1, гр
 ```powershell
 .venv\Scripts\python.exe main.py --dir C:\photos --json
 ```
+
+## `evaluate_grades.py` — точность грейдов
+
+Сравнивает класс приложения с метками в имени файла:
+
+- `G0_*.jpg ... G4_*.jpg` — ожидаемый грейд 0–4;
+- `G_ERROR_*.jpg` — ожидается БРАК (нераспознанный или плохой код).
+
+```powershell
+.venv\Scripts\python.exe tools\evaluate_grades.py --dir samples
+.venv\Scripts\python.exe tools\evaluate_grades.py --dir samples --verbose
+.venv\Scripts\python.exe tools\evaluate_grades.py --dir samples --csv grades.csv
+.venv\Scripts\python.exe tools\evaluate_grades.py --dir samples --json grades.json
+.venv\Scripts\python.exe tools\evaluate_grades.py --dir samples --strict
+```
+
+Выводится матрица «эталон → наш округлённый грейд», доля точных
+совпадений, ошибка ±1, средняя абсолютная ошибка и список расхождений.
+`--strict` завершается с кодом 1 при любом расхождении — удобно для CI на
+закрытом наборе.
+
+Папки `samples/` в git нет; инструмент нужен для локальной калибровки
+`core/grade.py` перед изменением порогов.
 
 ## Другие ОС
 

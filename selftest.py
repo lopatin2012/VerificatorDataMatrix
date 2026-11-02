@@ -196,6 +196,11 @@ def _run_checks():
           and "мкм" in growth.value, growth.value if growth else "")
     check("report: growth parser accepts a comma",
           _parse_growth("+1,8 мкм; +2,0%") == (1.8, 2.0))
+    uec = next((p for p in res.params if p.name == "Запас коррекции ошибок"),
+               None)
+    check("grade: zxing UEC is used for unused error correction",
+          uec is not None and uec.value == "100%" and uec.grade == 4,
+          f"{uec.value if uec else None} ({uec.grade if uec else None})")
 
     # --- separated read / GS1 / quality statuses ---
     check("status: plain DataMatrix is not reported as GS1",

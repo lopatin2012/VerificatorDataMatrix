@@ -174,7 +174,8 @@ def _analyze_one(img, dec, um_per_px, calibration_default):
             res.elements = []
             res.gs1_warnings = []
 
-    params = grade.grade_symbol(sym, decoded=dec.ok)
+    params = grade.grade_symbol(sym, decoded=dec.ok,
+                                uec=getattr(dec, "uec", None))
     res.params = params
 
     # Physical module pitch per axis (sym.module_px_* is in source pixels;

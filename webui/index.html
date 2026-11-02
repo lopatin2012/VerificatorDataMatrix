@@ -63,6 +63,10 @@
             <span class="unit">мкм/px</span>
           </span>
         </label>
+        <button class="btn ghost small" id="calibbtn" type="button"
+                disabled title="Пересчитать калибровку по паспортному X-dim">
+          по X-dim
+        </button>
         <label class="toggle"><input type="checkbox" id="overlaytoggle" checked> Подсветка</label>
       </div>
     </section>
@@ -160,6 +164,23 @@
     <span id="history">Проанализировано: 0 кодов</span>
     <span id="appver" class="muted"></span>
   </footer>
+
+  <dialog id="calibdialog" class="dialog">
+    <form method="dialog" id="calibform">
+      <h3>Калибровка по X-dim</h3>
+      <p class="hint">Введите паспортную размерность символа в микронах —
+        приложение пересчитает мкм/px по шагу модулей.</p>
+      <label class="field">X-dim, мкм
+        <input id="calibnominal" type="text" inputmode="decimal"
+               autocomplete="off">
+      </label>
+      <p id="caliberror" class="formerror" hidden></p>
+      <div class="dialog-actions">
+        <button class="btn ghost" type="button" id="calibcancel">Отмена</button>
+        <button class="btn" type="button" id="calibapply">Применить</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

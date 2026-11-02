@@ -12,6 +12,7 @@ const state = {
   history: [],
   showOverlay: true,
   crptCode: null,
+  calibration: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -249,6 +250,7 @@ function render(data) {
 
 function initEmptyState() {
   drawGauge(0, "#cfd8dc");
+  $("calibbtn").disabled = true;
   renderParamsEmpty();
   renderData({});
   $("defects").innerHTML =
@@ -278,6 +280,7 @@ function renderEmpty(data) {
     const el = $(id);
     if (el) el.textContent = "—";
   });
+  $("calibbtn").disabled = true;
   renderParamsEmpty();
   const defectCount = $("defectcount");
   if (defectCount) defectCount.textContent = "";
@@ -365,6 +368,7 @@ function renderResult(r) {
     ? num(r.um_per_px) + " мкм/px" +
       (r.calibration_default ? " · по умолч." : "")
     : "—";
+  $("calibbtn").disabled = !r.module_px_x;
   const reason = (r.params || []).find(p => !p.passed);
   $("reason").textContent = reason ? (reason.name + ": " + reason.value)
     : (r.error || "Все параметры в норме");
@@ -797,6 +801,48 @@ function wireCamera() {
   window.addEventListener("beforeunload", stopCamera);
 }
 
+function saveCalibration(value) {
+  try {
+    if (value) localStorage.setItem("dm_um_per_px", value);
+    else localStorage.removeItem("dm_um_per_px");
+  } catch (e) { /* storage disabled */ }
+}
+
+async function reanalyzeCurrent() {
+  const cur = state.results[state.current];
+  if (!cur || !cur.result_id) return;
+  const rid = cur.result_id;
+  const um = ($("umpp").value || "").trim();
+  $("validation").textContent = "Пересчёт с калибровкой...";
+  $("validation").style.color = "#f9a825";
+  try {
+    const resp = await fetch("api/reanalyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result_id: rid, um_per_px: um || null }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      $("validation").textContent = data.error || "Ошибка пересчёта";
+      $("validation").style.color = "#c62828";
+      return;
+    }
+    if (!data.image) {
+      $("validation").textContent = data.error || "Код не найден";
+      $("validation").style.color = "#c62828";
+      return;
+    }
+    const now = state.results[state.current];
+    if (!now || now.result_id !== rid) return;
+    setImage(data.image);
+    render(data);
+    loadHistory();
+  } catch (e) {
+    $("validation").textContent = "Ошибка сети: " + e;
+    $("validation").style.color = "#c62828";
+  }
+}
+
 function wireCalibration() {
   const el = $("umpp");
   if (!el) return;
@@ -804,12 +850,77 @@ function wireCalibration() {
     const saved = localStorage.getItem("dm_um_per_px");
     if (saved) el.value = saved;
   } catch (e) { /* storage disabled */ }
+  state.calibration = (el.value || "").trim();
   el.addEventListener("change", () => {
     const value = (el.value || "").trim();
-    try {
-      if (value) localStorage.setItem("dm_um_per_px", value);
-      else localStorage.removeItem("dm_um_per_px");
-    } catch (e) { /* storage disabled */ }
+    if (value === state.calibration) return;
+    if (value) {
+      const parsed = Number(value.replace(",", "."));
+      if (!isFinite(parsed) || parsed <= 0) {
+        $("validation").textContent = "Некорректная калибровка";
+        $("validation").style.color = "#c62828";
+        return;
+      }
+    }
+    state.calibration = value;
+    saveCalibration(value);
+    reanalyzeCurrent();
+  });
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      el.blur();
+    }
+  });
+}
+
+function wireCalibDialog() {
+  const dlg = $("calibdialog");
+  const nominal = $("calibnominal");
+  const error = $("caliberror");
+  if (!dlg || !nominal || !error) return;
+
+  function apply() {
+    const r = state.result;
+    if (!r || !r.module_px_x) return;
+    const parsed = Number((nominal.value || "").replace(",", "."));
+    if (!isFinite(parsed) || parsed <= 0) {
+      error.textContent = "Введите положительное число";
+      error.hidden = false;
+      return;
+    }
+    const um = parsed / r.module_px_x;
+    const text = Number(um.toFixed(3)).toLocaleString("ru-RU",
+      { maximumFractionDigits: 3 });
+    $("umpp").value = text;
+    state.calibration = text;
+    saveCalibration(text);
+    if (dlg.open) dlg.close();
+    reanalyzeCurrent();
+  }
+
+  $("calibbtn").addEventListener("click", () => {
+    const r = state.result;
+    if (!r || !r.module_px_x) return;
+    nominal.value = r.x_dim_um != null ? String(Math.round(r.x_dim_um)) : "";
+    error.hidden = true;
+    if (typeof dlg.showModal === "function") {
+      if (!dlg.open) dlg.showModal();
+    } else {
+      const value = window.prompt("Номинальный X-dim, мкм:", nominal.value);
+      if (value !== null) {
+        nominal.value = value;
+        apply();
+      }
+    }
+  });
+  $("calibcancel").addEventListener("click", () => dlg.close());
+  $("calibapply").addEventListener("click", apply);
+  nominal.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      apply();
+    }
   });
 }
 
@@ -932,6 +1043,7 @@ fetchVersion();
 wireDropzone();
 wireCamera();
 wireCalibration();
+wireCalibDialog();
 wireCrpt();
 wireTabs();
 wireControls();

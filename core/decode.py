@@ -22,6 +22,7 @@ class DecodeResult:
         self.via_grid = False
         self.gray = None
         self.symbology_id = ""    # AIM identifier, e.g. ]d1 / ]d2 (GS1)
+        self.uec = None           # zxing unused-error-correction ratio (0..1)
 
 
 def _prep(img):
@@ -50,6 +51,18 @@ def _quads_close(a, b, tol_frac=0.2):
         return True
     size = float(np.abs(np.asarray(b, dtype=np.float32) - np.asarray(a, dtype=np.float32)).max())
     return dist < tol_frac * size
+
+
+def _barcode_uec(b):
+    """zxing's unused-error-correction ratio (0..1), or None."""
+    extra = getattr(b, "extra", None)
+    if not isinstance(extra, dict):
+        return None
+    value = extra.get("UEC")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _barcode_quad(b):
@@ -205,15 +218,16 @@ def _decode_impl(img, _depth):
     gray, rgb = _prep(img)
     im = Image.fromarray(rgb)
 
-    candidates = []  # (quad, text, bytes, position, size, symbology_id)
+    candidates = []  # (quad, text, bytes, position, size, symbology_id, uec)
 
     def add_candidate(quad, text=None, byt=None, position=None, size=None,
-                      symid=""):
+                      symid="", uec=None):
         quad = detect._order_quad(np.asarray(quad, dtype=np.float32).reshape(4, 2))
         for q, *_ in candidates:
             if _quads_close(q, quad):
                 return
-        candidates.append((quad, text, byt, position, size, symid or ""))
+        candidates.append((quad, text, byt, position, size, symid or "",
+                           uec))
 
     # Direct decodes on raw color (all of them, not just the first).
     found = zxingcpp.read_barcodes(
@@ -225,7 +239,8 @@ def _decode_impl(img, _depth):
                       [(p.x, p.y) for p in (b.position.top_left, b.position.top_right,
                                             b.position.bottom_right, b.position.bottom_left)],
                       _barcode_size(b),
-                      getattr(b, "symbology_identifier", ""))
+                      getattr(b, "symbology_identifier", ""),
+                      _barcode_uec(b))
 
     # Some low-contrast symbols only appear after aggressive thresholding.
     for th in (96, 128, 160, 192):
@@ -239,7 +254,8 @@ def _decode_impl(img, _depth):
                           [(p.x, p.y) for p in (b.position.top_left, b.position.top_right,
                                                 b.position.bottom_right, b.position.bottom_left)],
                           _barcode_size(b),
-                          getattr(b, "symbology_identifier", ""))
+                          getattr(b, "symbology_identifier", ""),
+                          _barcode_uec(b))
 
     # Position-only candidates (include undecoded results) + run-based L locator.
     for q in detect.locate_candidates(gray):
@@ -249,7 +265,7 @@ def _decode_impl(img, _depth):
 
     results = []
     frame_w, frame_h = gray.shape[1], gray.shape[0]
-    for quad, text, byt, position, size, symid in candidates:
+    for quad, text, byt, position, size, symid, uec in candidates:
         # Skip obviously-bogus position-only quads before the size search.
         if text is None and not _plausible_quad(quad, frame_w, frame_h):
             continue
@@ -263,6 +279,7 @@ def _decode_impl(img, _depth):
         dec.position = position
         dec.symbol = sym
         dec.symbology_id = symid
+        dec.uec = uec
         dec.ok = text is not None
         dec.text = text
         dec.bytes = byt
@@ -541,6 +558,7 @@ def _dotted_scan(gray, region, offset=(0, 0), relaxed=False,
                     dec.quad = detect._order_quad(quad)
                     dec.via_grid = True
                     dec.symbology_id = getattr(hit, "symbology_identifier", "")
+                    dec.uec = _barcode_uec(hit)
                     out.append(dec)
                 if out:
                     return out, detected

@@ -61,7 +61,7 @@ typecheck, formatter, or codegen config — don't invent one.
 
 `main.py --selftest` (`selftest.py`) is self-contained: GS1 parsing/validation
 (including GS-separated variable fields and dates) plus synthetic solid, dotted,
-and inverted DataMatrix decode and geometry/grading regressions (42 checks). It
+and inverted DataMatrix decode and geometry/grading regressions (43 checks). It
 asserts that dimensions are reported in source microns, that a rectangular
 ECC200 symbol (12x26) is not penalised for its aspect ratio, that the default
 calibration is flagged, that report values use a decimal comma, that
@@ -86,7 +86,9 @@ in git, so still verify decode/geometry changes manually against
   the browser when the socket accepts connections, `--host 0.0.0.0` for LAN).
   They resolve the repo root as `..` and use the repo `.venv`. Keep paths quoted
   so Cyrillic/space paths work. Never auto-kill an existing server: the
-  free-port pick avoids serving stale code.
+  free-port pick avoids serving stale code. `evaluate_grades.py` compares
+  `G0..G4` / `G_ERROR` filename labels with our grade (confusion matrix,
+  `--csv`, `--json`, `--strict`); no network, no app changes.
 - `verifier.analyze_all(img)` is the pipeline entry: decode + grid + grades +
   GS1 for **every** symbol, returning a list of `Result` sorted best-first
   (decoded/higher grade first); `analyze(img)` returns the first or an error
@@ -112,7 +114,8 @@ in git, so still verify decode/geometry changes manually against
   plausible (>= 8 modules/side, >= 24 px, aspect <= 5, <= 80% of frame) and the
   L+timing pattern score is strong — the run-based locator emits whole-frame
   and tiny (4x4) false positives. `DecodeResult.symbology_id` carries zxing's
-  AIM identifier (`]d1`, `]d2`, ...); the dotted path keeps it too.
+  AIM identifier (`]d1`, `]d2`, ...) and `DecodeResult.uec` its unused-error-
+  correction ratio (from `extra['UEC']`); the dotted path keeps both.
 - The zxing decode supplies the authoritative module count: `_barcode_size`
   reads it from `Barcode.to_image(scale=1)` and passes it as `size_hint`
   through `_symbol_for_quad`; a wrong grid can still decode (e.g. 20x4 for a
@@ -145,6 +148,9 @@ in git, so still verify decode/geometry changes manually against
   quiet zone is `2,8 мод.`. `SCALES` holds the **actual** 4/3/2/1 thresholds
   used by the code; `Param.scale` feeds the PDF/CLI/web reports (do not
   replace them with ISO numbers unless the grades themselves are recalibrated).
+  `grade_symbol(..., uec=...)` uses zxing's UEC ratio when present and only
+  falls back to `SC-20` for grid/dotted paths. Use
+  `tools/evaluate_grades.py` before changing thresholds.
 - `gs1.py` — parses AIs from raw bytes or HRI; a GS/FNC1 separator is
   authoritative for variable-length fields. Supports pattern AIs (310n–316n,
   390n–395n). `validate()` returns warnings (unknown AI, fixed-length mismatch,
@@ -166,9 +172,10 @@ in git, so still verify decode/geometry changes manually against
   `{image, results:[...]}`, one `result_id` per code; with no code it still
   returns `image` plus `error`), `/api/history`, `/api/history/clear`,
   `/api/result/<id>`, `/api/history.csv`, `/api/history.txt`,
-  `/api/history.pdf`, `/api/pdf`, `/api/version`, `/api/crpt` (opt-in product
-  lookup, 200 with normalized data, 400/404/502 on error; result cached and
-  attached to the history entry so `/api/result` and the PDF can reuse it).
+  `/api/history.pdf`, `/api/pdf`, `/api/version`, `/api/reanalyze` (stored image
+  + new `um_per_px` → new result ids), `/api/crpt` (opt-in product lookup, 200
+  with normalized data, 400/404/502 on error; result cached and attached to the
+  history entry so `/api/result` and the PDF can reuse it).
   Entries are an in-memory LRU of 50
   (`{res, img, payload, thumb, ts, crpt?}`), so ids 404 once evicted and
   history dies with the process. `history.txt` is one decoded code per line
@@ -189,7 +196,10 @@ in git, so still verify decode/geometry changes manually against
   selectors together. Camera is open-then-capture (first click previews,
   second captures); tabs are wired by `data-tab`. On wide screens the page is
   `100vh` with no body scroll; the health/diag cards scroll internally. At
-  <=1300px it becomes a single scrolling column on purpose.
+  <=1300px it becomes a single scrolling column on purpose. Calibration changes
+  (manual field or the X-dim dialog) call `/api/reanalyze` on the current result
+  and update the view without re-uploading; the dialog uses
+  `result.module_px_x`.
 - `report.py` — `build_pdf` is used by the web service; it prints calibration
   (red warning + disclaimer), separates «Чтение: OK» from the quality verdict,
   adds the `Шкала 4/3/2/1` column, shows `res.symbology`, renders the GS1 table
@@ -199,7 +209,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.42`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.43`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.
