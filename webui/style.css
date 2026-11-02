@@ -24,9 +24,12 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 
+html, body { height: 100%; }
+
 body {
   margin: 0;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   font-family: "Segoe UI", Roboto, system-ui, Arial, sans-serif;
@@ -77,6 +80,7 @@ body {
 main {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
   width: 100%;
   max-width: 1900px;
   margin: 0 auto;
@@ -283,7 +287,7 @@ main {
 
 /* ------------------------------------------------------------- health */
 
-.health { flex: 0 0 auto; }
+.health { flex: 0 0 auto; overflow-y: auto; }
 .statuspill {
   align-self: flex-start;
   max-width: 100%;
@@ -610,10 +614,12 @@ footer {
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 1300px) {
+  body { height: auto; min-height: 100vh; overflow: auto; }
   main {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto auto;
     height: auto;
+    overflow: visible;
   }
   .scene { grid-column: 1; grid-row: auto; min-height: 62vh; }
   .side {
@@ -623,7 +629,12 @@ footer {
     grid-column: 1;
     grid-row: auto;
   }
-  .health, .diag { grid-column: auto; grid-row: auto; min-height: auto; }
+  .health, .diag {
+    grid-column: auto;
+    grid-row: auto;
+    min-height: auto;
+    overflow: visible;
+  }
   .histcard { grid-column: 1; grid-row: auto; }
   .diag { overflow: visible; }
   .tabpanes { min-height: 260px; }

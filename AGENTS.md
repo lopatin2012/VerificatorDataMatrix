@@ -187,7 +187,9 @@ in git, so still verify decode/geometry changes manually against
   health card with measurement rows, and tabs `Данные / Товар / Дефекты /
   Отчёт`; history strip with time. Keep JS IDs stable or update `app.js`
   selectors together. Camera is open-then-capture (first click previews,
-  second captures); tabs are wired by `data-tab`.
+  second captures); tabs are wired by `data-tab`. On wide screens the page is
+  `100vh` with no body scroll; the health/diag cards scroll internally. At
+  <=1300px it becomes a single scrolling column on purpose.
 - `report.py` — `build_pdf` is used by the web service; it prints calibration
   (red warning + disclaimer), separates «Чтение: OK» from the quality verdict,
   adds the `Шкала 4/3/2/1` column, shows `res.symbology`, renders the GS1 table
@@ -197,7 +199,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.41`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.42`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.
