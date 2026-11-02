@@ -29,8 +29,15 @@ const PROCESS_TIPS = [
   "Для ЧЗ нужен интернет и доступ к mobile.api.crpt.ru; вне РФ сервис может быть недоступен.",
   "В ЧЗ отправляется полный код маркировки, включая криптохвост (AI 91/92/93).",
   "«Найден, проверка не пройдена» означает, что код есть в ГИС МТ, но криптохвост не подтверждён.",
-  "Без интернета проверка качества, отчёт и экспорт работают как обычно.",
-  "Сначала декодируйте код, затем откройте вкладку «Товар» и нажмите «Проверить в ЧЗ».",
+  "Код маркировки = GTIN (AI 01) + серийный номер (AI 21) + криптохвост (AI 91–93); без хвоста ЧЗ обычно отвечает «не найден».",
+  "Блик, смаз или сильный наклон могут обрезать криптохвост — переснимите код при рассеянном свете.",
+  "ЧЗ проверяет подлинность, а не качество печати: грейд и отчёт считаются локально и без интернета.",
+  "Порог качества печати в ЧЗ — грейд выше 1,5; в приложении такой код получает вердикт «ГОДЕН».",
+  "Данные о товаре приходят из ГИС МТ; для части категорий владелец, бренд или срок годности могут быть пустыми.",
+  "Статус «не пройдена» бывает и у демо-кодов, и у кодов с истёкшим или отозванным статусом — сверяйте товар с упаковкой.",
+  "Если код не найден, проверьте, что декодирован весь код, включая символы после AI 21.",
+  "Повторная проверка того же кода берётся сервером из кэша, но сам код всё равно отправляется по сети.",
+  "Сведения ЧЗ информационные: юридически значимая проверка — в официальном приложении «Честный Знак».",
 ];
 let _progressTipTimer = null;
 let _progressTipIndex = 0;
@@ -442,6 +449,7 @@ function renderResult(r) {
   $("grade").textContent = "Грейд " + r.min_grade.toFixed(1).replace(".", ",") +
     (r.symbol_size ? " / " + r.symbol_size : "") +
     (r.calibration_default ? " · без калибровки" : "");
+  $("grade").title = "Порог качества печати в ЧЗ: грейд выше 1,5";
   $("grade").style.color = vcolor;
   drawGauge(r.score, r.color);
 
@@ -482,6 +490,10 @@ function renderResult(r) {
     resetCrpt();
   }
   $("crptbtn").disabled = !code;
+  const crptBox = $("crptinfo");
+  if (crptBox && !crptBox.children.length) {
+    setCrptHelp(crptAvailabilityHint(r));
+  }
 }
 
 function renderParams(data) {
@@ -609,8 +621,51 @@ function setCrptStatus(text, color) {
 function resetCrpt() {
   state.crptInfo = null;
   setCrptStatus("Не проверено", "#78909c");
+  setCrptHelp("");
   const box = $("crptinfo");
   if (box) box.innerHTML = "";
+}
+
+function setCrptHelp(text) {
+  const el = $("crpthelp");
+  if (el) el.textContent = text || "";
+}
+
+function crptResultHint(info) {
+  if (!info || info.error || info.ok === false) {
+    return "Проверьте подключение и повторите запрос позже — качество " +
+      "печати и отчёт считаются без сети.";
+  }
+  if (info.found && info.check) {
+    return "Код зарегистрирован и криптохвост подтверждён. Сверьте товар, " +
+      "производителя и срок годности с упаковкой.";
+  }
+  if (info.found) {
+    return "Код есть в ГИС МТ, но криптоподпись не подтверждена: так " +
+      "отвечают демо-коды, коды с повреждённым криптохвостом и подделки. " +
+      "Переснимите код и сверьте товар с упаковкой.";
+  }
+  return "Кода нет в ГИС МТ: проверьте, что считан весь код (AI 01, 21 " +
+    "и 91–93), и попробуйте переснять изображение.";
+}
+
+function crptAvailabilityHint(data) {
+  const code = data && (data.content_raw || data.content);
+  if (!code) {
+    return "Код не распознан — сначала добейтесь уверенного чтения.";
+  }
+  const elements = data.elements || [];
+  if (!elements.length) {
+    return "Это не GS1-код: для проверки в ЧЗ нужен код маркировки " +
+      "с AI 01, 21 и криптохвостом.";
+  }
+  const hasCrypto = elements.some(
+    (el) => ["91", "92", "93"].includes(String(el.ai)));
+  if (!hasCrypto) {
+    return "В коде нет криптохвоста (AI 91–93): ЧЗ, скорее всего, ответит " +
+      "«не найден» или «проверка не пройдена».";
+  }
+  return "Код содержит криптохвост — можно отправлять на проверку в ЧЗ.";
 }
 
 function crptRow(label, value) {
@@ -634,6 +689,7 @@ function renderCrpt(info) {
   if (!info || info.error || info.ok === false) {
     state.crptInfo = null;
     setCrptStatus("Ошибка запроса", "#c62828");
+    setCrptHelp(crptResultHint(info));
     box.appendChild(crptRow("Ошибка",
       info && info.error ? info.error : "неизвестная ошибка"));
     return;
@@ -646,6 +702,7 @@ function renderCrpt(info) {
   } else {
     setCrptStatus("Не найден в ГИС МТ", "#c62828");
   }
+  setCrptHelp(crptResultHint(info));
   const fields = [
     ["Статус", info.status_text],
     ["Проверка кода", info.check_status_text],

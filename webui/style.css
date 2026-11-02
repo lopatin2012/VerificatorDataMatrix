@@ -568,13 +568,26 @@ main {
   color: var(--accent);
   user-select: none;
 }
-.help ul {
+.help ul, .help ol {
   margin: 0;
-  padding: 0 12px 9px 26px;
+  padding: 0 0 0 22px;
   color: var(--ink-2);
   line-height: 1.45;
 }
 .help li { margin: 3px 0; }
+.helpblock { padding: 0 12px 4px; }
+.help h4 {
+  margin: 8px 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.helpnote {
+  margin: 6px 12px 10px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.helpblock .helpnote { margin-left: 0; margin-right: 0; }
 .crptstatus { font-size: 13px; font-weight: 700; margin: 4px 0 8px; }
 .crptinfo { display: flex; flex-direction: column; }
 .crptrow {

@@ -154,6 +154,10 @@ in git, so still verify decode/geometry changes manually against
   MAD-based spread (`_relative_mad`) so one edge-affected light module cannot
   turn a clean code into a 12% failure. The remaining parameters are still
   approximate. Use `tools/evaluate_grades.py` before changing more thresholds.
+  `verifier.is_good` treats a decoded code with `min_grade > 1.5` as good — that
+  is the Chestny Znak print-quality threshold, so grade 2,0 passes: never
+  describe 2,0 as a failure in the UI, help texts or tips. The Товар tab help
+  spells this out (statuses in ГИС МТ, answer meanings, grade bands).
 - `gs1.py` — parses AIs from raw bytes or HRI; a GS/FNC1 separator is
   authoritative for variable-length fields. Supports pattern AIs (310n–316n,
   390n–395n). `validate()` returns warnings (unknown AI, fixed-length mismatch,
@@ -218,7 +222,7 @@ in git, so still verify decode/geometry changes manually against
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.49`) appears in the web header, CLI
+`VERSION` in `version.py` (currently `1.0.50`) appears in the web header, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.
