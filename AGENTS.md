@@ -67,11 +67,12 @@ typecheck, formatter, or codegen config — don't invent one.
 
 `main.py --selftest` (`selftest.py`) is self-contained: GS1 parsing/validation
 (including GS-separated variable fields and dates) plus synthetic solid, dotted,
-and inverted DataMatrix decode and geometry/grading regressions (30 checks). It
+and inverted DataMatrix decode and geometry/grading regressions (39 checks). It
 asserts that dimensions are reported in source microns, that a rectangular
 ECC200 symbol (12x26) is not penalised for its aspect ratio, that the default
-calibration is flagged, that report values use a decimal comma, and that
-read/GS1/quality statuses and threshold scales are exposed. Real images are not
+calibration is flagged, that report values use a decimal comma, that
+read/GS1/quality statuses and threshold scales are exposed, and that GS1
+detection, dates, expiry warnings and HRI are correct. Real images are not
 in git, so still verify decode/geometry changes manually against
 `test_image_codes/` or the owner's `samples/`. CI
 (`.github/workflows/ci.yml`) runs the same command on Ubuntu after installing
@@ -106,8 +107,11 @@ in git, so still verify decode/geometry changes manually against
   `quality_ok`/`quality_status` (`good|bad|unknown`), while `good` is the
   combined verdict. `to_dict()` carries all of them plus `um_per_px`,
   `calibration_default/note/warning`, `module_px_x/y` and per-param
-  `display`/`scale`; `score_of`, `is_good`, `plain_content`, and
-  `problem_regions` live here too.
+  `display`/`scale`; `content_hri`, per-element `ai`/`label`/`display_value`,
+  and `symbology` are here too. `hri_content()`, `score_of`, `is_good`,
+  `plain_content`, and `problem_regions` live here too. GS1 vs plain is decided
+  by `gs1.is_gs1` + `DecodeResult.symbology_id` (`]d2`/`]d5`); plain codes get
+  no elements/warnings.
 - `core/decode.py` — `decode_all` returns one `DecodeResult` per symbol,
   deduped by quad. zxing gets an RGB image, and gray comes from
   `cvtColor(BGR2GRAY)` — **never** `cv2.imread(..., IMREAD_GRAYSCALE)`, which
@@ -116,7 +120,8 @@ in git, so still verify decode/geometry changes manually against
   Undecoded but located symbols are kept for grading only if the quad is
   plausible (>= 8 modules/side, >= 24 px, aspect <= 5, <= 80% of frame) and the
   L+timing pattern score is strong — the run-based locator emits whole-frame
-  and tiny (4x4) false positives.
+  and tiny (4x4) false positives. `DecodeResult.symbology_id` carries zxing's
+  AIM identifier (`]d1`, `]d2`, ...); the dotted path keeps it too.
 - The zxing decode supplies the authoritative module count: `_barcode_size`
   reads it from `Barcode.to_image(scale=1)` and passes it as `size_hint`
   through `_symbol_for_quad`; a wrong grid can still decode (e.g. 20x4 for a
@@ -154,11 +159,17 @@ in git, so still verify decode/geometry changes manually against
   `Result.module_px_x`; the value is persisted under APPDATA (or
   `~/.config/DataMatrixVerifier`) via `config.py`, never in the repo. The report
   tab is a read-only `tk.Text` (selectable/copyable) with PDF/calibrate/reset
-  buttons and red calibration/estimate warnings.
+  buttons and red calibration/estimate warnings. The Data tab has RAW and HRI
+  copy buttons and chips with AI, description and `display_value`.
 - `gs1.py` — parses AIs from raw bytes or HRI; a GS/FNC1 separator is
   authoritative for variable-length fields. Supports pattern AIs (310n–316n,
   390n–395n). `validate()` returns warnings (unknown AI, fixed-length mismatch,
-  impossible dates, GTIN/SSCC mod-10), surfaced as `Result.gs1_warnings`.
+  impossible dates, expired/near-expiry 15/16/17, GTIN/SSCC mod-10), surfaced
+  as `Result.gs1_warnings`. `is_gs1()` is a documented heuristic: FNC1/GS or
+  `]d2`/`]d5` or a valid GTIN/SSCC/ITIP at the start; a plain numeric DataMatrix
+  starting with a valid GTIN is the ambiguous case. `Element.display_value()`
+  renders `ДД.ММ.ГГГГ` (DD=00 -> last day), `display_label()` avoids
+  "AI 17 [AI 17]", and `format_gs1_date()` is shared with the expiry check.
 - Copy paths preserve the GS separator `\x1d` (only FS `\x1c`/RS `\x1e` are
   stripped): `plain_content()` feeds `content_raw`/`content_plain`. GUI and web
   copy the raw string and only render `[GS]` on screen. Don't strip `\x1d` —
@@ -174,21 +185,24 @@ in git, so still verify decode/geometry changes manually against
   `/api/analyze` also accepts an optional `um_per_px` form field (comma or dot,
   must be > 0; invalid values return 400) and stores calibration fields in the
   payload; the calibration input is persisted in `localStorage`. `history.csv`
-  has separate `Чтение`/`GS1`/`Качество` and `Калибровка` columns. Upload cap is
-  25 MB (`MAX_CONTENT_LENGTH`); a 413
+  has separate `Чтение`/`GS1`/`Качество` and `Калибровка` columns, and GS1
+  element values use `label`/`display_value`. The UI has a HRI copy button and
+  chips built with `textContent` (never innerHTML for barcode data). Upload cap
+  is 25 MB (`MAX_CONTENT_LENGTH`); a 413
   returns JSON. PDFs go to `PDF_DIR` (a temp dir), never `webui/`.
   `@app.after_request` sets `Cache-Control: no-store`.
 - `report.py` — `build_pdf` is used by both the web service and the GUI button;
   it prints calibration (red warning + disclaimer), separates «Чтение: OK» from
-  the quality verdict, adds the `Шкала 4/3/2/1` column, and `build_history_pdf`
-  builds the history export with read/GS1/quality columns. `ui.py` draws its own overlays
+  the quality verdict, adds the `Шкала 4/3/2/1` column, shows `res.symbology`,
+  renders the GS1 table as AI/element/display value/description, and
+  `build_history_pdf` builds the history export with read/GS1/quality columns. `ui.py` draws its own overlays
   and shows a "Код не найден" banner; its "Экспорт TXT" button writes
   `scan_log` (all decoded contents this session, consecutive duplicates
   collapsed) as UTF-8 CRLF, one code per line.
 
 ## Versioning
 
-`VERSION` in `version.py` (currently `1.0.38`) appears in the window title, CLI
+`VERSION` in `version.py` (currently `1.0.39`) appears in the window title, CLI
 `--version`, and PDF footer. Rules: bump **patch** after every `AGENTS.md`
 edit, **minor** after a session with >30 user requests, **major** after >300.
 `version.py` must be bumped alongside.

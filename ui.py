@@ -11,8 +11,8 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps
 
 from config import load_settings, save_settings
 from verifier import (DEFAULT_UM_PER_PX, Result, analyze_all, calibration_note,
-                      calibration_warning, fmt_ru, imread_unicode, is_good,
-                      plain_content, problem_regions, score_of)
+                      calibration_warning, fmt_ru, hri_content, imread_unicode,
+                      is_good, plain_content, problem_regions, score_of)
 from version import VERSION
 
 
@@ -347,6 +347,7 @@ class VerifierApp:
         self.code_selector.bind("<<ComboboxSelected>>", lambda e: self._on_select_code())
         self.content_var = tk.StringVar(value="—")
         self.content_raw_var = tk.StringVar(value="")
+        self.content_hri_var = tk.StringVar(value="")
         content_frame = ttk.Frame(data)
         content_frame.pack(fill=tk.X, padx=4, pady=(4, 2))
         tk.Label(content_frame, text="Содержимое:", font=("Segoe UI", 9, "bold"),
@@ -357,9 +358,16 @@ class VerifierApp:
                                     relief="solid", bd=1, padx=6, pady=4)
         self.content_lbl.pack(fill=tk.X)
         self.data_cards = []
-        self.copy_all_btn = ttk.Button(data, text="Скопировать содержимое",
+        data_btns = ttk.Frame(data)
+        data_btns.pack(anchor="w", pady=(4, 6))
+        self.copy_all_btn = ttk.Button(data_btns,
+                                       text="Скопировать содержимое",
                                        command=self._copy_all)
-        self.copy_all_btn.pack(anchor="w", pady=(4, 6))
+        self.copy_all_btn.pack(side=tk.LEFT)
+        self.copy_hri_btn = ttk.Button(data_btns, text="Скопировать HRI",
+                                       command=self._copy_hri,
+                                       state=tk.DISABLED)
+        self.copy_hri_btn.pack(side=tk.LEFT, padx=(6, 0))
         self.chips_frame = ttk.Frame(data)
         self.chips_frame.pack(fill=tk.X, padx=4, pady=4)
 
@@ -724,25 +732,36 @@ class VerifierApp:
             w.destroy()
         if not res:
             self.content_raw_var.set("")
+            self.content_hri_var.set("")
             self.content_var.set("—")
             self.copy_all_btn.configure(state=tk.DISABLED,
                                         text="Скопировать содержимое")
+            self.copy_hri_btn.configure(state=tk.DISABLED)
             return
         raw = plain_content(res)
+        hri = hri_content(res)
         self.content_raw_var.set(raw)
+        self.content_hri_var.set(hri)
         self.content_var.set(raw.replace("\x1d", "[GS]") if raw else "—")
         self.copy_all_btn.configure(
             state=tk.NORMAL if res.content else tk.DISABLED,
             text="Скопировать содержимое" + (f" ({len(res.elements)} AI)"
                  if res.elements else ""))
+        self.copy_hri_btn.configure(state=tk.NORMAL if hri else tk.DISABLED)
         if res.elements:
             for el in res.elements:
                 chip = ttk.Frame(self.chips_frame, relief="solid", padding=4)
                 chip.pack(side=tk.LEFT, padx=3, pady=3)
-                tk.Label(chip, text=el.display_name(), font=("Segoe UI", 9, "bold"),
+                tk.Label(chip, text=el.display_label(),
+                         font=("Segoe UI", 9, "bold"),
                          bg="#ffffff").pack(anchor="w")
-                tk.Label(chip, text=el.value, font=("Consolas", 9),
+                tk.Label(chip, text=el.display_value(),
+                         font=("Consolas", 9),
                          bg="#ffffff").pack(anchor="w")
+                if el.description:
+                    tk.Label(chip, text=el.description,
+                             font=("Segoe UI", 8), fg="#90a4ae",
+                             bg="#ffffff", wraplength=180).pack(anchor="w")
                 ttk.Button(chip, text="Копировать",
                            command=lambda v=el.value: self._copy(v)).pack(pady=(2, 0))
                 self.data_cards.append(chip)
@@ -772,8 +791,11 @@ class VerifierApp:
         ]
         if res.calibration_default:
             lines.append("ВНИМАНИЕ: " + calibration_warning(res))
+        hri = hri_content(res)
         lines.extend([
+            f"Символ: {res.symbology}",
             f"Содержимое: {res.content or '(не декодировано)'}",
+            (f"HRI: {hri}" if hri else "HRI: —"),
             f"Размер символа: {res.symbol.rows}×{res.symbol.cols}",
             (f"X-размерность: {res.x_dim_um:.0f} мкм | "
              f"Y: {res.y_dim_um:.0f} мкм | Апертура: {res.aperture_um} мкм"),
@@ -797,7 +819,7 @@ class VerifierApp:
         lines.append("")
         lines.append("Данные GS1:")
         for el in res.elements:
-            lines.append(f"  {el.display_name():<8} = {el.value}")
+            lines.append(f"  {el.display_label()} = {el.display_value()}")
         if not res.elements:
             lines.append("  (нет)")
         lines.append("")
@@ -892,6 +914,11 @@ class VerifierApp:
 
     def _copy_all(self):
         self._copy(self.content_raw_var.get())
+
+    def _copy_hri(self):
+        hri = self.content_hri_var.get()
+        if hri:
+            self._copy(hri)
 
     # ---------------------------------------------------------- history
 

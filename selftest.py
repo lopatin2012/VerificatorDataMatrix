@@ -6,8 +6,9 @@ import cv2
 import numpy as np
 import zxingcpp
 
-from gs1 import parse, validate
-from verifier import _parse_growth, analyze, calibration_note, to_dict
+from gs1 import is_gs1, parse, validate
+from verifier import (_parse_growth, analyze, calibration_note, hri_content,
+                      to_dict)
 
 
 def _module_map(text):
@@ -90,6 +91,26 @@ def _run_checks():
     check("gs1: valid date accepted",
           not any("некорректн" in w for w in validate(ok_date)),
           str(validate(ok_date)))
+    check("gs1: date is human-readable",
+          parse("(17)251231")[0].display_value() == "31.12.2025",
+          parse("(17)251231")[0].display_value())
+    check("gs1: DD=00 renders the last day of the month",
+          parse("(17)251200")[0].display_value() == "31.12.2025",
+          parse("(17)251200")[0].display_value())
+    check("gs1: date-time AI 7003 is human-readable",
+          parse("(7003)2512312359")[0].display_value()
+          == "31.12.2025 23:59",
+          parse("(7003)2512312359")[0].display_value())
+    expired = validate(parse("(17)200101"))
+    check("gs1: expired date is warned", any("истёк" in w for w in expired),
+          str(expired))
+    future = validate(parse("(17)491231"))
+    check("gs1: future date is not marked expired",
+          not any("истёк" in w for w in future), str(future))
+    check("gs1: detection accepts GS1 and rejects plain data",
+          is_gs1(b"0100012345600012\x1d21SER",
+                 parse(b"0100012345600012\x1d21SER"))
+          and not is_gs1(b"HELLO-DM", parse(b"HELLO-DM")))
 
     # --- end-to-end decode: solid + dotted + inverted synthetic symbols ---
     mod = _module_map("HELLO-DM")
@@ -177,8 +198,11 @@ def _run_checks():
 
     # --- separated read / GS1 / quality statuses ---
     check("status: plain DataMatrix is not reported as GS1",
-          res.gs1_status == "none" and not res.gs1_warnings,
-          f"{res.gs1_status} {res.gs1_warnings}")
+          res.gs1_status == "none" and not res.gs1_warnings
+          and res.symbology == "DataMatrix",
+          f"{res.symbology} {res.gs1_status} {res.gs1_warnings}")
+    check("status: plain DataMatrix has no HRI",
+          hri_content(res) == "", hri_content(res))
     check("status: read and quality flags are explicit",
           res.read_ok and res.quality_ok and res.quality_status == "good",
           f"read={res.read_ok} quality={res.quality_ok} "
@@ -186,14 +210,26 @@ def _run_checks():
     gs1_res = analyze(_render_solid(
         _module_map("0100012345600012\x1d17251332"), quiet=3))
     check("status: GS1 warnings are reported separately",
-          gs1_res.gs1_status == "warn" and gs1_res.gs1_warnings,
-          f"{gs1_res.gs1_status} {gs1_res.gs1_warnings}")
+          gs1_res.gs1_status == "warn" and gs1_res.gs1_warnings
+          and gs1_res.symbology == "GS1 DataMatrix",
+          f"{gs1_res.symbology} {gs1_res.gs1_status} {gs1_res.gs1_warnings}")
+    check("gs1: HRI is generated for a GS1 result",
+          hri_content(gs1_res).startswith("(01)")
+          and "(17)" in hri_content(gs1_res), hri_content(gs1_res))
     payload = to_dict(res)
     check("report: JSON carries statuses and threshold scales",
           payload["read_ok"] and payload["quality_ok"]
           and payload["gs1_status"] == "none"
           and bool(payload["params"][1]["scale"]),
           f"{payload['gs1_status']} {payload['params'][1].get('scale')}")
+    gs1_payload = to_dict(gs1_res)
+    check("report: JSON carries HRI and AI display values",
+          gs1_payload["content_hri"].startswith("(01)")
+          and gs1_payload["elements"][0]["ai"] == "01"
+          and gs1_payload["elements"][0]["display_value"]
+          == "00012345600012"
+          and payload["content_hri"] == "",
+          str(gs1_payload["elements"][:1]))
 
     return checks
 

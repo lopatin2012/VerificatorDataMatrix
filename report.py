@@ -122,7 +122,7 @@ def build_pdf(res, frame_bgr, path):
                                leading=10.5)
     info = [
         ["Класс символа", res.overall_class or "—", "Штрих-код",
-         "GS1 DataMatrix"],
+         res.symbology or "—"],
         ["Содержимое",
          Paragraph(_clean_para(res.content or "(не декодировано)"), cell),
          "Размер символа", size_txt],
@@ -241,12 +241,14 @@ def build_pdf(res, frame_bgr, path):
     if res.elements:
         story.append(Paragraph("Данные GS1", s_h))
         cell = ParagraphStyle("cell", fontName=F, fontSize=8.5, leading=11)
-        gdata = [["Элемент", "Значение", "Описание"]]
+        gdata = [["AI", "Элемент", "Значение", "Описание"]]
         for el in res.elements:
-            gdata.append([Paragraph(_clean_para(el.display_name()), cell),
-                          Paragraph(_clean_para(el.value), cell),
+            gdata.append([Paragraph(_clean_para(el.ai), cell),
+                          Paragraph(_clean_para(el.display_name()), cell),
+                          Paragraph(_clean_para(el.display_value()), cell),
                           Paragraph(_clean_para(el.description), cell)])
-        gt = Table(gdata, colWidths=[35 * mm, 80 * mm, 55 * mm], repeatRows=1)
+        gt = Table(gdata, colWidths=[12 * mm, 30 * mm, 70 * mm, 58 * mm],
+                   repeatRows=1)
         gt.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, 0), FB),
             ("FONTNAME", (0, 1), (-1, -1), F),

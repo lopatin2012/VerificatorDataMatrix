@@ -1,4 +1,5 @@
 """GS1 Application Identifier parsing for GS1 DataMatrix content."""
+import datetime
 
 # AI table: ai -> (name, description, length) where length is None for
 # variable-length (terminated by FNC1 / GS separator or end of data).
@@ -105,6 +106,21 @@ class Element:
             return self.name
         return f"AI {self.ai}"
 
+    def display_value(self):
+        """Human-readable value; GS1 dates are rendered as DD.MM.YYYY."""
+        length = _DATE_FORMATS.get(self.ai)
+        if length:
+            formatted = format_gs1_date(self.value, length)
+            if formatted:
+                return formatted
+        return self.value
+
+    def display_label(self):
+        """Chip/label text without duplicating 'AI' for generic elements."""
+        if self.name in ("GTIN", "SERIAL", "KEY", "SG", "EXT"):
+            return f"{self.name} (AI {self.ai})"
+        return f"AI {self.ai}"
+
 
 def parse(data):
     """Parse raw DataMatrix bytes into a list of Elements.
@@ -200,6 +216,46 @@ def _mod10_check_digit(digits):
     return (10 - total % 10) % 10
 
 
+def _valid_check_digit(digits):
+    if not digits.isdigit() or len(digits) < 2:
+        return False
+    return int(digits[-1]) == _mod10_check_digit(digits[:-1])
+
+
+def is_gs1(data, elements=None):
+    """Best-effort GS1 DataMatrix detection.
+
+    zxing-cpp does not expose the FNC1 position, so we use:
+    - a GS/FNC1 separator in the raw bytes or the `<GS>` text marker;
+    - otherwise a valid GTIN/SSCC/ITIP at the start (the common case for
+      fixed-length-only GS1 symbols).
+    A plain DataMatrix that happens to start with a valid GTIN is therefore
+    classified as GS1; that is the only ambiguous case without FNC1 info.
+    """
+    if data is None:
+        return False
+    if isinstance(data, bytes):
+        raw = data
+        text = data.decode("latin-1")
+    else:
+        text = str(data)
+        raw = text.encode("latin-1", "ignore")
+    if b"\x1d" in raw or "\x1d" in text or "<GS>" in text:
+        return True
+    if elements is None:
+        elements = parse(data)
+    if not elements:
+        return False
+    first = elements[0]
+    if first.ai in ("01", "02"):
+        return len(first.value) == 14 and _valid_check_digit(first.value)
+    if first.ai == "00":
+        return len(first.value) == 18 and _valid_check_digit(first.value)
+    if first.ai in ("8006", "8018"):
+        return len(first.value) == 18 and first.value.isdigit()
+    return False
+
+
 def validate(elements):
     """Return a list of human-readable warnings for parsed GS1 elements.
 
@@ -223,6 +279,10 @@ def validate(elements):
             problem = _date_problem(el.value, _DATE_FORMATS[el.ai])
             if problem:
                 warnings.append(f"AI {el.ai}: {problem}")
+            elif el.ai in ("15", "16", "17"):
+                expiry = _expiry_warning(el)
+                if expiry:
+                    warnings.append(expiry)
     for el in elements:
         if el.ai in ("01", "02") and len(el.value) == 14 and el.value.isdigit():
             if int(el.value[-1]) != _mod10_check_digit(el.value[:13]):
@@ -234,6 +294,34 @@ def validate(elements):
     return warnings
 
 
+def _days_in_month(year, month):
+    if month == 2:
+        return 29 if _is_leap(year) else 28
+    return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+
+
+def _date_parts(value, length):
+    """(year, month, day, hour, minute) or None.
+
+    GS1 allows DD=00 to mean "the last day of the month" for date fields.
+    """
+    if not value.isdigit() or len(value) != length:
+        return None
+    yy, mm, dd = int(value[0:2]), int(value[2:4]), int(value[4:6])
+    if not 1 <= mm <= 12:
+        return None
+    year = 2000 + yy if yy < 50 else 1900 + yy
+    days = _days_in_month(year, mm)
+    if not 0 <= dd <= days:
+        return None
+    hour = minute = 0
+    if length == 10:
+        hour, minute = int(value[6:8]), int(value[8:10])
+        if hour > 23 or minute > 59:
+            return None
+    return year, mm, dd, hour, minute
+
+
 def _date_problem(value, length):
     """Return a Russian description if a GS1 date/time value is invalid."""
     if not value.isdigit() or len(value) != length:
@@ -242,14 +330,47 @@ def _date_problem(value, length):
     if not 1 <= mm <= 12:
         return f"некорректный месяц в дате {value}"
     year = 2000 + yy if yy < 50 else 1900 + yy
-    days = [31, 29 if _is_leap(year) else 28, 31, 30, 31, 30, 31, 31,
-            30, 31, 30, 31][mm - 1]
-    if not 1 <= dd <= days:
+    if not 0 <= dd <= _days_in_month(year, mm):
         return f"некорректный день в дате {value}"
     if length == 10:
         hh, mi = int(value[6:8]), int(value[8:10])
         if hh > 23 or mi > 59:
             return f"некорректное время в {value}"
+    return None
+
+
+def format_gs1_date(value, length):
+    """'251231' -> '31.12.2025'; '2512312359' -> '31.12.2025 23:59'."""
+    parts = _date_parts(value, length)
+    if parts is None:
+        return None
+    year, month, day, hour, minute = parts
+    if day == 0:
+        day = _days_in_month(year, month)
+    text = f"{day:02d}.{month:02d}.{year:04d}"
+    if length == 10:
+        text += f" {hour:02d}:{minute:02d}"
+    return text
+
+
+def _expiry_warning(el):
+    """Warn when a best-before/sell-by/expiry date is past or imminent."""
+    parts = _date_parts(el.value, 6)
+    if parts is None:
+        return None
+    year, month, day, _hour, _minute = parts
+    if day == 0:
+        day = _days_in_month(year, month)
+    try:
+        expiry = datetime.date(year, month, day)
+    except ValueError:
+        return None
+    today = datetime.date.today()
+    shown = format_gs1_date(el.value, 6) or el.value
+    if expiry < today:
+        return f"AI {el.ai}: срок истёк ({shown})"
+    if (expiry - today).days <= 30:
+        return f"AI {el.ai}: истекает {shown}"
     return None
 
 

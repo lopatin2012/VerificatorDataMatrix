@@ -423,15 +423,26 @@ function renderData(data) {
   (data.elements || []).forEach(el => {
     const chip = document.createElement("div");
     chip.className = "chip";
-    chip.innerHTML = '<div class="cname">' + el.name + '</div>' +
-      '<div class="cval">' + el.value + '</div>' +
-      '<button class="ccopy">Копировать</button>';
-    chip.querySelector(".ccopy").addEventListener("click", (e) => {
+    const name = document.createElement("div");
+    name.className = "cname";
+    name.textContent = el.label || el.name;
+    const val = document.createElement("div");
+    val.className = "cval";
+    val.textContent = el.display_value || el.value;
+    if (el.description) val.title = el.description;
+    const btn = document.createElement("button");
+    btn.className = "ccopy";
+    btn.textContent = "Копировать";
+    btn.addEventListener("click", (e) => {
       copyText(el.value).then(ok => flashCopy(e.target, ok));
     });
+    chip.appendChild(name);
+    chip.appendChild(val);
+    chip.appendChild(btn);
     wrap.appendChild(chip);
   });
   $("copyall").disabled = !(data.content);
+  if ($("copyhri")) $("copyhri").disabled = !(data.content_hri);
 }
 
 function renderReport(data) {
@@ -451,7 +462,9 @@ function renderReport(data) {
   if (data.calibration_warning) {
     lines.push("ВНИМАНИЕ: " + data.calibration_warning);
   }
+  lines.push("Символ: " + (data.symbology || "—"));
   lines.push("Содержимое: " + (data.content || "(не декодировано)"));
+  if (data.content_hri) lines.push("HRI: " + data.content_hri);
   lines.push("Размер символа: " + data.symbol_size);
   lines.push("X-размерность: " + data.x_dim_um.toFixed(0) + " мкм | Y: " +
              data.y_dim_um.toFixed(0) + " мкм | Апертура: " +
@@ -475,7 +488,8 @@ function renderReport(data) {
   lines.push("");
   lines.push("Данные GS1:");
   (data.elements || []).forEach(el => {
-    lines.push("  " + el.name + " = " + el.value);
+    lines.push("  " + (el.label || el.name) + " = " +
+               (el.display_value || el.value));
   });
   if (!(data.elements || []).length) lines.push("  (нет)");
   lines.push("");
@@ -649,6 +663,12 @@ function wireControls() {
     if (state.result && state.result.content) {
       const text = state.result.content_plain || state.result.content.replace(/[()]/g, "");
       copyText(text).then(ok => flashCopy(e.target, ok));
+    }
+  });
+  const hriBtn = $("copyhri");
+  if (hriBtn) hriBtn.addEventListener("click", (e) => {
+    if (state.result && state.result.content_hri) {
+      copyText(state.result.content_hri).then(ok => flashCopy(e.target, ok));
     }
   });
   $("pdfbtn").addEventListener("click", async () => {

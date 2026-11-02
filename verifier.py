@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 from core import decode, detect, grade
-from gs1 import parse, validate
+from gs1 import is_gs1, parse, validate
 
 # Standard reference apertures in microns (ISO 15415 selection).
 STANDARD_APERTURES = [160, 200, 250, 318, 400, 500, 630]
@@ -64,7 +64,7 @@ class Result:
         self.ok = False
         self.content = None
         self.content_raw = None
-        self.symbology = "GS1 DataMatrix"
+        self.symbology = "DataMatrix"
         self.min_grade = None
         self.min_reflectance = None
         self.max_reflectance = None
@@ -160,8 +160,19 @@ def _analyze_one(img, dec, um_per_px, calibration_default):
     if dec.ok:
         res.content = dec.text
         res.content_raw = dec.bytes.decode("latin-1") if dec.bytes else None
-        res.elements = parse(dec.bytes if dec.bytes else dec.text)
-        res.gs1_warnings = validate(res.elements)
+        raw = dec.bytes if dec.bytes else (dec.text or "")
+        elements = parse(raw)
+        symid = getattr(dec, "symbology_id", "") or ""
+        if is_gs1(raw, elements) or symid.startswith(("]d2", "]d5")):
+            res.symbology = "GS1 DataMatrix"
+            res.elements = elements
+            res.gs1_warnings = validate(elements)
+        else:
+            # A plain DataMatrix (no FNC1 / no valid GS1 identifier) must not
+            # be presented as GS1 or parsed into fake AIs.
+            res.symbology = "DataMatrix"
+            res.elements = []
+            res.gs1_warnings = []
 
     params = grade.grade_symbol(sym, decoded=dec.ok)
     res.params = params
@@ -236,6 +247,13 @@ def is_good(res):
     return res.validation == "OK" and not res.error and res.min_grade > 1.5
 
 
+def hri_content(res):
+    """GS1 HRI form: '(01)00012345600012(21)SER' (empty for plain codes)."""
+    if not res.elements:
+        return ""
+    return "".join(f"({el.ai}){el.value}" for el in res.elements)
+
+
 def plain_content(res):
     """Copy-friendly content: no AI parens, FS/RS separators stripped,
     but GS (\x1d) preserved — it is the standard GS1 field separator
@@ -261,6 +279,7 @@ def to_dict(res):
         "content": res.content,
         "content_raw": res.content_raw,
         "content_plain": plain_content(res),
+        "content_hri": hri_content(res),
         "symbology": res.symbology,
         "validation": res.validation,
         "read_ok": res.read_ok,
@@ -290,7 +309,9 @@ def to_dict(res):
             for p in res.params
         ],
         "elements": [
-            {"name": el.display_name(), "value": el.value,
+            {"ai": el.ai, "name": el.display_name(),
+             "label": el.display_label(), "value": el.value,
+             "display_value": el.display_value(),
              "description": el.description}
             for el in res.elements
         ],

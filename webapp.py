@@ -228,8 +228,10 @@ def api_history_csv():
     w.writerow(["Время", "Чтение", "GS1", "Качество", "Класс", "Оценка",
                 "Символ", "Содержимое", "Калибровка", "Данные GS1"])
     for d in rows:
-        elems = "; ".join(f'{el["name"]}={el["value"]}'
-                          for el in d.get("elements", []))
+        elems = "; ".join(
+            f'{el.get("label", el["name"])}='
+            f'{el.get("display_value", el["value"])}'
+            for el in d.get("elements", []))
         gs1 = {"ok": "OK",
                "warn": f"{len(d.get('gs1_warnings', []))} предупр.",
                "none": "—"}.get(d.get("gs1_status"), "—")

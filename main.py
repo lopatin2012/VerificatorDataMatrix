@@ -15,8 +15,8 @@ import sys
 import cv2
 
 from verifier import (DEFAULT_UM_PER_PX, Result, analyze_all,
-                      calibration_note, calibration_warning, imread_unicode,
-                      to_dict)
+                      calibration_note, calibration_warning, hri_content,
+                      imread_unicode, to_dict)
 from version import VERSION
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
@@ -52,6 +52,9 @@ def print_report(res, path, index=None, total=None):
           f"Качество: {quality}")
     print("-" * 60)
     print("Содержимое:", res.content if res.content else "(не декодировано)")
+    hri = hri_content(res)
+    if hri:
+        print("HRI:", hri)
     print("Штрих-код:", res.symbology, f"({res.symbol.rows}x{res.symbol.cols})")
     print(f"X-размерность: {res.x_dim_um:.0f} мкм | Y: {res.y_dim_um:.0f} мкм | "
           f"Апертура: {res.aperture_um} мкм")
@@ -70,7 +73,7 @@ def print_report(res, path, index=None, total=None):
             print(f"  {p.name}: {p.scale}")
     print("-" * 60)
     for el in res.elements:
-        print(f"  {el.display_name():<8} = {el.value}")
+        print(f"  {el.display_label()} = {el.display_value()}")
     for w in getattr(res, "gs1_warnings", []):
         print("  [WARN]", w)
 
